@@ -387,6 +387,12 @@ class VucemValidatorController extends Controller
      */
     protected function findPdfimages(): ?string
     {
+        // Primero verificar si está configurado en .env
+        $configPath = $this->getConfiguredPath('pdfimages');
+        if ($configPath) {
+            return $configPath;
+        }
+        
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         
         if ($isWindows) {
@@ -875,6 +881,12 @@ quit
      */
     protected function findQpdf(): ?string
     {
+        // Primero verificar si está configurado en .env
+        $configPath = $this->getConfiguredPath('qpdf');
+        if ($configPath) {
+            return $configPath;
+        }
+        
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         
         if ($isWindows) {
@@ -968,6 +980,12 @@ quit
 
     protected function findGhostscript(): ?string
     {
+        // Primero verificar si está configurado en .env
+        $configPath = $this->getConfiguredPath('ghostscript');
+        if ($configPath) {
+            return $configPath;
+        }
+        
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         
         if ($isWindows) {
@@ -1025,6 +1043,34 @@ quit
             }
         }
 
+        return null;
+    }
+    
+    /**
+     * Obtiene la ruta configurada en .env/config si existe y es válida
+     */
+    protected function getConfiguredPath(string $tool): ?string
+    {
+        $path = config("pdftools.{$tool}");
+        
+        if (empty($path)) {
+            return null;
+        }
+        
+        // Verificar que la ruta existe o que el comando es ejecutable
+        if (file_exists($path)) {
+            return $path;
+        }
+        
+        // Si no es un archivo, podría ser un comando en PATH (ej: 'gs', 'pdfimages')
+        $versionArg = $tool === 'pdfimages' ? '-v' : '--version';
+        $process = new Process([$path, $versionArg]);
+        $process->run();
+        
+        if ($process->isSuccessful() || str_contains($process->getErrorOutput(), $tool)) {
+            return $path;
+        }
+        
         return null;
     }
 }

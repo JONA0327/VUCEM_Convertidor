@@ -26,9 +26,37 @@ class VucemPdfConverter
         // Detectar sistema operativo una sola vez al inicializar
         $this->isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         
-        // Buscar herramientas según el SO
-        $this->ghostscriptPath = $this->findGhostscript();
-        $this->pdfimagesPath = $this->findPdfimages();
+        // Primero intentar obtener rutas desde config/env, si no autodetectar
+        $this->ghostscriptPath = $this->getConfiguredPath('ghostscript') ?: $this->findGhostscript();
+        $this->pdfimagesPath = $this->getConfiguredPath('pdfimages') ?: $this->findPdfimages();
+    }
+    
+    /**
+     * Obtiene la ruta configurada en .env/config si existe y es válida
+     */
+    protected function getConfiguredPath(string $tool): ?string
+    {
+        $path = config("pdftools.{$tool}");
+        
+        if (empty($path)) {
+            return null;
+        }
+        
+        // Verificar que la ruta existe o que el comando es ejecutable
+        if (file_exists($path)) {
+            return $path;
+        }
+        
+        // Si no es un archivo, podría ser un comando en PATH (ej: 'gs', 'pdfimages')
+        $versionArg = $tool === 'pdfimages' ? '-v' : '--version';
+        $process = new Process([$path, $versionArg]);
+        $process->run();
+        
+        if ($process->isSuccessful() || str_contains($process->getErrorOutput(), $tool)) {
+            return $path;
+        }
+        
+        return null;
     }
 
     /**
