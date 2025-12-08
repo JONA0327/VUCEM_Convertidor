@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>VUSEM Tools - Herramientas PDF</title>
+    <title>VUCEM Tools - Herramientas PDF</title>
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -29,7 +29,7 @@
     <div class="container">
         <!-- Header -->
         <header class="header">
-            <h1>🔧 VUSEM Tools</h1>
+            <h1>🔧 VUCEM Tools</h1>
             <p>Herramientas para preparar y validar tus documentos PDF según los requisitos de VUSEM</p>
         </header>
 
