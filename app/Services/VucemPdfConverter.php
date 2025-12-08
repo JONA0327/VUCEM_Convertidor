@@ -19,9 +19,14 @@ class VucemPdfConverter
 {
     protected ?string $ghostscriptPath = null;
     protected ?string $pdfimagesPath = null;
+    protected bool $isWindows;
 
     public function __construct()
     {
+        // Detectar sistema operativo una sola vez al inicializar
+        $this->isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        
+        // Buscar herramientas según el SO
         $this->ghostscriptPath = $this->findGhostscript();
         $this->pdfimagesPath = $this->findPdfimages();
     }
@@ -287,20 +292,61 @@ class VucemPdfConverter
 
     protected function findGhostscript(): ?string
     {
-        $gsFolders = glob('C:\\Program Files\\gs\\gs*\\bin\\gswin64c.exe');
-        if ($gsFolders) {
-            rsort($gsFolders, SORT_NATURAL);
-            foreach ($gsFolders as $path) {
-                if (file_exists($path)) {
+        if ($this->isWindows) {
+            // Rutas de Windows
+            $gsFolders = glob('C:\\Program Files\\gs\\gs*\\bin\\gswin64c.exe');
+            if ($gsFolders) {
+                rsort($gsFolders, SORT_NATURAL);
+                foreach ($gsFolders as $path) {
+                    if (file_exists($path)) {
+                        return $path;
+                    }
+                }
+            }
+            
+            // Intentar en PATH de Windows
+            $process = new Process(['gswin64c', '--version']);
+            $process->run();
+            if ($process->isSuccessful()) {
+                return 'gswin64c';
+            }
+            
+            // Intentar versión 32 bits
+            $process = new Process(['gswin32c', '--version']);
+            $process->run();
+            if ($process->isSuccessful()) {
+                return 'gswin32c';
+            }
+        } else {
+            // Rutas de Linux/Unix
+            $linuxPaths = [
+                '/usr/bin/gs',
+                '/usr/local/bin/gs',
+                '/opt/local/bin/gs',
+            ];
+            
+            foreach ($linuxPaths as $path) {
+                if (file_exists($path) && is_executable($path)) {
                     return $path;
                 }
             }
-        }
-        
-        $process = new Process(['gswin64c', '--version']);
-        $process->run();
-        if ($process->isSuccessful()) {
-            return 'gswin64c';
+            
+            // Intentar en PATH de Linux
+            $process = new Process(['which', 'gs']);
+            $process->run();
+            if ($process->isSuccessful()) {
+                $path = trim($process->getOutput());
+                if (!empty($path) && file_exists($path)) {
+                    return $path;
+                }
+            }
+            
+            // Último intento: ejecutar directamente
+            $process = new Process(['gs', '--version']);
+            $process->run();
+            if ($process->isSuccessful()) {
+                return 'gs';
+            }
         }
 
         return null;
@@ -308,15 +354,56 @@ class VucemPdfConverter
 
     protected function findPdfimages(): ?string
     {
-        $paths = [
-            'C:\\Poppler\\Release-25.12.0-0\\poppler-25.12.0\\Library\\bin\\pdfimages.exe',
-            'C:\\Poppler\\Library\\bin\\pdfimages.exe',
-            'C:\\Program Files\\poppler\\bin\\pdfimages.exe',
-        ];
-        
-        foreach ($paths as $path) {
-            if (file_exists($path)) {
-                return $path;
+        if ($this->isWindows) {
+            // Rutas de Windows
+            $windowsPaths = [
+                'C:\\Poppler\\Release-25.12.0-0\\poppler-25.12.0\\Library\\bin\\pdfimages.exe',
+                'C:\\Poppler\\Library\\bin\\pdfimages.exe',
+                'C:\\Program Files\\poppler\\bin\\pdfimages.exe',
+                'C:\\Program Files (x86)\\poppler\\bin\\pdfimages.exe',
+            ];
+            
+            foreach ($windowsPaths as $path) {
+                if (file_exists($path)) {
+                    return $path;
+                }
+            }
+            
+            // Buscar con glob por si hay diferentes versiones
+            $popplerFolders = glob('C:\\Poppler\\Release-*\\poppler-*\\Library\\bin\\pdfimages.exe');
+            if ($popplerFolders) {
+                rsort($popplerFolders, SORT_NATURAL);
+                return $popplerFolders[0];
+            }
+        } else {
+            // Rutas de Linux/Unix
+            $linuxPaths = [
+                '/usr/bin/pdfimages',
+                '/usr/local/bin/pdfimages',
+                '/opt/local/bin/pdfimages',
+            ];
+            
+            foreach ($linuxPaths as $path) {
+                if (file_exists($path) && is_executable($path)) {
+                    return $path;
+                }
+            }
+            
+            // Intentar en PATH de Linux
+            $process = new Process(['which', 'pdfimages']);
+            $process->run();
+            if ($process->isSuccessful()) {
+                $path = trim($process->getOutput());
+                if (!empty($path) && file_exists($path)) {
+                    return $path;
+                }
+            }
+            
+            // Último intento: ejecutar directamente
+            $process = new Process(['pdfimages', '-v']);
+            $process->run();
+            if (str_contains($process->getErrorOutput() . $process->getOutput(), 'pdfimages')) {
+                return 'pdfimages';
             }
         }
 
@@ -326,6 +413,10 @@ class VucemPdfConverter
     public function getToolsInfo(): array
     {
         return [
+            'os' => [
+                'type' => $this->isWindows ? 'Windows' : 'Linux/Unix',
+                'php_os' => PHP_OS,
+            ],
             'ghostscript' => [
                 'available' => $this->ghostscriptPath !== null,
                 'path' => $this->ghostscriptPath,
