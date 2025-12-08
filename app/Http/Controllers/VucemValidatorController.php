@@ -383,25 +383,66 @@ class VucemValidatorController extends Controller
     }
 
     /**
-     * Buscar pdfimages en PATH o en ruta específica
+     * Buscar pdfimages en PATH o en ruta específica (multiplataforma)
      */
     protected function findPdfimages(): ?string
     {
-        $possible = [
-            'pdfimages',
-            'C:\\Poppler\\Release-25.12.0-0\\poppler-25.12.0\\Library\\bin\\pdfimages.exe',
-        ];
-
-        foreach ($possible as $path) {
-            // Si es solo 'pdfimages', dejamos que Process lo resuelva por PATH
-            if ($path === 'pdfimages') {
-                $process = new Process([$path, '-v']);
-                $process->run();
-                if ($process->isSuccessful()) {
+        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        
+        if ($isWindows) {
+            // Windows: buscar en rutas conocidas
+            $windowsPaths = [
+                'C:\\Poppler\\Release-25.12.0-0\\poppler-25.12.0\\Library\\bin\\pdfimages.exe',
+                'C:\\Poppler\\Library\\bin\\pdfimages.exe',
+                'C:\\Program Files\\poppler\\bin\\pdfimages.exe',
+            ];
+            
+            foreach ($windowsPaths as $path) {
+                if (file_exists($path)) {
                     return $path;
                 }
-            } else {
+            }
+            
+            // Buscar con glob
+            $popplerFolders = glob('C:\\Poppler\\Release-*\\poppler-*\\Library\\bin\\pdfimages.exe');
+            if ($popplerFolders) {
+                rsort($popplerFolders, SORT_NATURAL);
+                return $popplerFolders[0];
+            }
+        } else {
+            // Linux/Unix - Primero intentar ejecutar directamente
+            $process = Process::fromShellCommandline('pdfimages -v 2>&1');
+            $process->run();
+            $output = $process->getOutput() . $process->getErrorOutput();
+            if (str_contains($output, 'pdfimages') || str_contains($output, 'poppler')) {
+                return 'pdfimages';
+            }
+            
+            // Rutas comunes de Linux
+            $linuxPaths = [
+                '/usr/bin/pdfimages',
+                '/usr/local/bin/pdfimages',
+                '/opt/local/bin/pdfimages',
+                '/snap/bin/pdfimages',
+            ];
+            
+            foreach ($linuxPaths as $path) {
                 if (file_exists($path)) {
+                    $process = new Process([$path, '-v']);
+                    $process->run();
+                    $output = $process->getOutput() . $process->getErrorOutput();
+                    if (str_contains($output, 'pdfimages') || str_contains($output, 'poppler')) {
+                        return $path;
+                    }
+                }
+            }
+            
+            // Intentar con which
+            $process = Process::fromShellCommandline('which pdfimages 2>/dev/null');
+            $process->run();
+            if ($process->isSuccessful()) {
+                $path = trim($process->getOutput());
+                if (!empty($path)) {
                     return $path;
                 }
             }
@@ -793,9 +834,16 @@ quit
 
     protected function checkEncryptionWithQpdf(string $path): array
     {
-        // Este check solo funcionará si tienes qpdf instalado y en el PATH.
+        // Buscar qpdf según el sistema operativo
+        $qpdfPath = $this->findQpdf();
+        
+        if (!$qpdfPath) {
+            // Intentar verificar con Ghostscript si qpdf no está disponible
+            return $this->checkEncryptionWithGs($path);
+        }
+        
         $process = new Process([
-            'qpdf',
+            $qpdfPath,
             '--show-encryption',
             $path,
         ]);
@@ -803,7 +851,7 @@ quit
         $process->run();
 
         if (! $process->isSuccessful()) {
-            // Intentar verificar con Ghostscript si qpdf no está disponible
+            // Intentar verificar con Ghostscript si qpdf falla
             return $this->checkEncryptionWithGs($path);
         }
 
@@ -820,6 +868,51 @@ quit
             'is_unencrypted' => false,
             'detail'         => 'El archivo está encriptado o protegido.',
         ];
+    }
+    
+    /**
+     * Buscar qpdf en el sistema (multiplataforma)
+     */
+    protected function findQpdf(): ?string
+    {
+        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        
+        if ($isWindows) {
+            $windowsPaths = [
+                'C:\\Program Files\\qpdf\\bin\\qpdf.exe',
+                'C:\\qpdf\\bin\\qpdf.exe',
+            ];
+            
+            foreach ($windowsPaths as $path) {
+                if (file_exists($path)) {
+                    return $path;
+                }
+            }
+            
+            // Intentar en PATH
+            $process = new Process(['qpdf', '--version']);
+            $process->run();
+            if ($process->isSuccessful()) {
+                return 'qpdf';
+            }
+        } else {
+            // Linux: intentar ejecutar directamente
+            $process = Process::fromShellCommandline('qpdf --version 2>/dev/null');
+            $process->run();
+            if ($process->isSuccessful()) {
+                return 'qpdf';
+            }
+            
+            // Rutas comunes
+            $linuxPaths = ['/usr/bin/qpdf', '/usr/local/bin/qpdf'];
+            foreach ($linuxPaths as $path) {
+                if (file_exists($path)) {
+                    return $path;
+                }
+            }
+        }
+        
+        return null;
     }
 
     protected function checkEncryptionWithGs(string $path): array
@@ -875,26 +968,60 @@ quit
 
     protected function findGhostscript(): ?string
     {
-        $possiblePaths = [
-            'gswin64c',
-            'C:\\Program Files\\gs\\gs10.06.0\\bin\\gswin64c.exe',
-            'C:\\Program Files\\gs\\gs10.05.0\\bin\\gswin64c.exe',
-            'C:\\Program Files\\gs\\gs10.04.0\\bin\\gswin64c.exe',
-            'C:\\Program Files\\gs\\gs10.03.1\\bin\\gswin64c.exe',
-            'C:\\Program Files\\gs\\gs10.03.0\\bin\\gswin64c.exe',
-            'C:\\Program Files\\gs\\gs10.02.1\\bin\\gswin64c.exe',
-            'C:\\Program Files\\gs\\gs10.01.0\\bin\\gswin64c.exe',
-            'C:\\Program Files\\gs\\gs9.56.1\\bin\\gswin64c.exe',
-        ];
-
-        $gsFolders = glob('C:\\Program Files\\gs\\gs*\\bin\\gswin64c.exe');
-        if ($gsFolders) {
-            $possiblePaths = array_merge($gsFolders, $possiblePaths);
-        }
-
-        foreach ($possiblePaths as $path) {
-            if (file_exists($path)) {
-                return $path;
+        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+        
+        if ($isWindows) {
+            // Windows: buscar en Program Files
+            $gsFolders = glob('C:\\Program Files\\gs\\gs*\\bin\\gswin64c.exe');
+            if ($gsFolders) {
+                rsort($gsFolders, SORT_NATURAL);
+                foreach ($gsFolders as $path) {
+                    if (file_exists($path)) {
+                        return $path;
+                    }
+                }
+            }
+            
+            // Intentar en PATH
+            $process = new Process(['gswin64c', '--version']);
+            $process->run();
+            if ($process->isSuccessful()) {
+                return 'gswin64c';
+            }
+        } else {
+            // Linux/Unix - Primero intentar ejecutar directamente 'gs'
+            $process = Process::fromShellCommandline('gs --version 2>/dev/null');
+            $process->run();
+            if ($process->isSuccessful() && !empty(trim($process->getOutput()))) {
+                return 'gs';
+            }
+            
+            // Rutas comunes de Linux/Unix
+            $linuxPaths = [
+                '/usr/bin/gs',
+                '/usr/local/bin/gs',
+                '/opt/local/bin/gs',
+                '/snap/bin/gs',
+            ];
+            
+            foreach ($linuxPaths as $path) {
+                if (file_exists($path)) {
+                    $process = new Process([$path, '--version']);
+                    $process->run();
+                    if ($process->isSuccessful()) {
+                        return $path;
+                    }
+                }
+            }
+            
+            // Intentar con which
+            $process = Process::fromShellCommandline('which gs 2>/dev/null');
+            $process->run();
+            if ($process->isSuccessful()) {
+                $path = trim($process->getOutput());
+                if (!empty($path)) {
+                    return $path;
+                }
             }
         }
 
