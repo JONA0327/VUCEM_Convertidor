@@ -318,34 +318,41 @@ class VucemPdfConverter
                 return 'gswin32c';
             }
         } else {
-            // Rutas de Linux/Unix
+            // Linux/Unix - Primero intentar ejecutar directamente 'gs'
+            // Esto funciona si gs está en el PATH del sistema
+            $process = Process::fromShellCommandline('gs --version 2>/dev/null');
+            $process->run();
+            if ($process->isSuccessful() && !empty(trim($process->getOutput()))) {
+                return 'gs';
+            }
+            
+            // Rutas comunes de Linux/Unix
             $linuxPaths = [
                 '/usr/bin/gs',
                 '/usr/local/bin/gs',
                 '/opt/local/bin/gs',
+                '/snap/bin/gs',
             ];
             
             foreach ($linuxPaths as $path) {
-                if (file_exists($path) && is_executable($path)) {
-                    return $path;
+                if (file_exists($path)) {
+                    // Verificar que es ejecutable probándolo
+                    $process = new Process([$path, '--version']);
+                    $process->run();
+                    if ($process->isSuccessful()) {
+                        return $path;
+                    }
                 }
             }
             
-            // Intentar en PATH de Linux
-            $process = new Process(['which', 'gs']);
+            // Intentar con which
+            $process = Process::fromShellCommandline('which gs 2>/dev/null');
             $process->run();
             if ($process->isSuccessful()) {
                 $path = trim($process->getOutput());
-                if (!empty($path) && file_exists($path)) {
+                if (!empty($path)) {
                     return $path;
                 }
-            }
-            
-            // Último intento: ejecutar directamente
-            $process = new Process(['gs', '--version']);
-            $process->run();
-            if ($process->isSuccessful()) {
-                return 'gs';
             }
         }
 
@@ -376,34 +383,42 @@ class VucemPdfConverter
                 return $popplerFolders[0];
             }
         } else {
-            // Rutas de Linux/Unix
+            // Linux/Unix - Primero intentar ejecutar directamente 'pdfimages'
+            $process = Process::fromShellCommandline('pdfimages -v 2>&1');
+            $process->run();
+            $output = $process->getOutput() . $process->getErrorOutput();
+            if (str_contains($output, 'pdfimages') || str_contains($output, 'poppler')) {
+                return 'pdfimages';
+            }
+            
+            // Rutas comunes de Linux/Unix
             $linuxPaths = [
                 '/usr/bin/pdfimages',
                 '/usr/local/bin/pdfimages',
                 '/opt/local/bin/pdfimages',
+                '/snap/bin/pdfimages',
             ];
             
             foreach ($linuxPaths as $path) {
-                if (file_exists($path) && is_executable($path)) {
-                    return $path;
+                if (file_exists($path)) {
+                    // Verificar que funciona ejecutándolo
+                    $process = new Process([$path, '-v']);
+                    $process->run();
+                    $output = $process->getOutput() . $process->getErrorOutput();
+                    if (str_contains($output, 'pdfimages') || str_contains($output, 'poppler')) {
+                        return $path;
+                    }
                 }
             }
             
-            // Intentar en PATH de Linux
-            $process = new Process(['which', 'pdfimages']);
+            // Intentar con which
+            $process = Process::fromShellCommandline('which pdfimages 2>/dev/null');
             $process->run();
             if ($process->isSuccessful()) {
                 $path = trim($process->getOutput());
-                if (!empty($path) && file_exists($path)) {
+                if (!empty($path)) {
                     return $path;
                 }
-            }
-            
-            // Último intento: ejecutar directamente
-            $process = new Process(['pdfimages', '-v']);
-            $process->run();
-            if (str_contains($process->getErrorOutput() . $process->getOutput(), 'pdfimages')) {
-                return 'pdfimages';
             }
         }
 
@@ -426,5 +441,70 @@ class VucemPdfConverter
                 'path' => $this->pdfimagesPath,
             ],
         ];
+    }
+
+    /**
+     * Información de debug para diagnóstico en producción
+     */
+    public function getDebugInfo(): array
+    {
+        $debug = [
+            'os' => [
+                'php_os' => PHP_OS,
+                'is_windows' => $this->isWindows,
+                'uname' => php_uname(),
+            ],
+            'paths_checked' => [],
+            'commands_tested' => [],
+        ];
+
+        if (!$this->isWindows) {
+            // Verificar rutas de Ghostscript
+            $gsPaths = ['/usr/bin/gs', '/usr/local/bin/gs', '/opt/local/bin/gs', '/snap/bin/gs'];
+            foreach ($gsPaths as $path) {
+                $debug['paths_checked']['gs'][$path] = [
+                    'exists' => file_exists($path),
+                    'is_executable' => is_executable($path),
+                ];
+            }
+
+            // Verificar rutas de pdfimages
+            $pdfPaths = ['/usr/bin/pdfimages', '/usr/local/bin/pdfimages', '/opt/local/bin/pdfimages'];
+            foreach ($pdfPaths as $path) {
+                $debug['paths_checked']['pdfimages'][$path] = [
+                    'exists' => file_exists($path),
+                    'is_executable' => is_executable($path),
+                ];
+            }
+
+            // Probar comandos directamente
+            $commands = [
+                'gs_version' => 'gs --version 2>&1',
+                'which_gs' => 'which gs 2>&1',
+                'pdfimages_version' => 'pdfimages -v 2>&1',
+                'which_pdfimages' => 'which pdfimages 2>&1',
+                'path_env' => 'echo $PATH',
+                'whoami' => 'whoami',
+            ];
+
+            foreach ($commands as $key => $cmd) {
+                $process = Process::fromShellCommandline($cmd);
+                $process->run();
+                $debug['commands_tested'][$key] = [
+                    'command' => $cmd,
+                    'success' => $process->isSuccessful(),
+                    'exit_code' => $process->getExitCode(),
+                    'output' => trim($process->getOutput()),
+                    'error' => trim($process->getErrorOutput()),
+                ];
+            }
+        }
+
+        $debug['final_paths'] = [
+            'ghostscript' => $this->ghostscriptPath,
+            'pdfimages' => $this->pdfimagesPath,
+        ];
+
+        return $debug;
     }
 }
