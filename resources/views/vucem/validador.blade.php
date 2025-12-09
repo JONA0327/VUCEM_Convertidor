@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Validador VUSEM - Verificar Documento</title>
+    <title>Validador VUCEM - Verificar Documento</title>
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,8 +30,8 @@
         <!-- Header -->
         <header class="header">
             <a href="{{ route('home') }}" class="back-link">← Volver al menú</a>
-            <h1>✅ Validador VUSEM</h1>
-            <p>Verifica que tu documento PDF cumpla con los requisitos de VUSEM</p>
+            <h1>✅ Validador VUCEM</h1>
+            <p>Verifica que tu documento PDF cumpla con los requisitos de VUCEM</p>
         </header>
 
         @if(isset($checks) && isset($fileName))
@@ -87,7 +87,7 @@
                 @if(!$allOk)
                     <div class="recommendation-box">
                         <h4>💡 Recomendación</h4>
-                        <p>Tu documento no cumple con todos los requisitos de VUSEM. Puedes usar nuestro <a href="{{ route('convertidor') }}">Convertidor</a> para transformar tu PDF al formato correcto.</p>
+                        <p>Tu documento no cumple con todos los requisitos de VUCEM. Puedes usar nuestro <a href="{{ route('convertidor') }}">Convertidor</a> para transformar tu PDF al formato correcto.</p>
                         <a href="{{ route('convertidor') }}" class="btn-convert active">Ir al Convertidor</a>
                     </div>
                 @endif
@@ -111,7 +111,7 @@
                             </svg>
                         </div>
                         <h3>Arrastra y suelta tu archivo PDF aquí</h3>
-                        <p>Se verificará que cumpla con los requisitos de VUSEM</p>
+                        <p>Se verificará que cumpla con los requisitos de VUCEM</p>
                         <input type="file" id="fileInput" name="pdf" accept=".pdf,application/pdf" hidden>
                         <button type="button" class="btn-select" id="btnSelectFile">
                             Seleccionar PDF

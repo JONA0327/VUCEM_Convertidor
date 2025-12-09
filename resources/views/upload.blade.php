@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Convertidor VUSEM - Carga de Documentos</title>
+    <title>Convertidor VUCEM - Carga de Documentos</title>
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,8 +30,8 @@
         <!-- Header -->
         <header class="header">
             <a href="{{ route('home') }}" class="back-link">← Volver al menú</a>
-            <h1>📄 Convertidor VUSEM</h1>
-            <p>Convierte tus documentos PDF al formato permitido por VUSEM de manera rápida y sencilla</p>
+            <h1>📄 Convertidor VUCEM</h1>
+            <p>Convierte tus documentos PDF al formato permitido por VUCEM de manera rápida y sencilla</p>
         </header>
 
         <!-- Main Upload Card -->
@@ -62,7 +62,7 @@
 
                 <!-- Convert Button -->
                 <button type="submit" class="btn-convert" id="btnConvert" disabled>
-                    Convertir a formato VUSEM
+                    Convertir a formato VUCEM
                 </button>
             </form>
         </div>
@@ -74,7 +74,7 @@
                 <ul>
                     <li>PDF (.pdf) únicamente</li>
                     <li>Múltiples archivos</li>
-                    <li>Conversión a formato VUSEM</li>
+                    <li>Conversión a formato VUCEM</li>
                     <li>Validación automática</li>
                 </ul>
             </div>

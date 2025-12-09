@@ -44,7 +44,7 @@ class PdfConverterController extends Controller
         // Crear nombres únicos para los archivos
         $uniqueId = uniqid();
         $inputFileName = $uniqueId . '_input.pdf';
-        $outputFileName = $uniqueId . '_VUSEM.pdf';
+        $outputFileName = $uniqueId . '_VUCEM.pdf';
         
         // Crear directorio temp si no existe
         $tempDir = storage_path('app/temp');

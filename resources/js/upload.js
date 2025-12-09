@@ -1,4 +1,4 @@
-// Convertidor VUSEM - JavaScript
+// Convertidor VUCEM - JavaScript
 
 document.addEventListener('DOMContentLoaded', function () {
     // Get elements
@@ -222,7 +222,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const url = URL.createObjectURL(item.downloadBlob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = item.downloadName || item.file.name.replace('.pdf', '_VUSEM.pdf');
+            a.download = item.downloadName || item.file.name.replace('.pdf', '_VUCEM.pdf');
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -235,14 +235,14 @@ document.addEventListener('DOMContentLoaded', function () {
         if (pendingFiles > 0 && !isProcessing) {
             btnConvert.classList.add('active');
             btnConvert.disabled = false;
-            btnConvert.innerHTML = `Convertir ${pendingFiles} archivo${pendingFiles > 1 ? 's' : ''} a formato VUSEM`;
+            btnConvert.innerHTML = `Convertir ${pendingFiles} archivo${pendingFiles > 1 ? 's' : ''} a formato VUCEM`;
         } else {
             btnConvert.classList.remove('active');
             btnConvert.disabled = true;
             if (isProcessing) {
                 btnConvert.innerHTML = 'Procesando...<span class="spinner"></span>';
             } else {
-                btnConvert.innerHTML = 'Convertir a formato VUSEM';
+                btnConvert.innerHTML = 'Convertir a formato VUCEM';
             }
         }
     }
@@ -321,7 +321,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (response.ok) {
                 // Get the blob from response
                 const blob = await response.blob();
-                const fileName = response.headers.get('X-File-Name') || item.file.name.replace('.pdf', '_VUSEM.pdf');
+                const fileName = response.headers.get('X-File-Name') || item.file.name.replace('.pdf', '_VUCEM.pdf');
                 const sizeWarning = response.headers.get('X-Size-Warning');
                 
                 item.status = 'completed';

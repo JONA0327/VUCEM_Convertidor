@@ -30,7 +30,7 @@
         <!-- Header -->
         <header class="header">
             <h1>🔧 VUCEM Tools</h1>
-            <p>Herramientas para preparar y validar tus documentos PDF según los requisitos de VUSEM</p>
+            <p>Herramientas para preparar y validar tus documentos PDF según los requisitos de VUCEM</p>
         </header>
 
         <!-- Menu Cards -->
@@ -83,7 +83,7 @@
 
         <!-- Info Section -->
         <div class="info-section">
-            <h3>📋 Requisitos de VUSEM para documentos PDF</h3>
+            <h3>📋 Requisitos de VUCEM para documentos PDF</h3>
             <div class="requirements-grid">
                 <div class="requirement-item">
                     <div class="requirement-icon">📏</div>
