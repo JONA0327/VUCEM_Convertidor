@@ -23,3 +23,17 @@
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
 </IfModule>
+
+# Aumentar límites de PHP para archivos grandes
+<IfModule mod_php.c>
+    php_value upload_max_filesize 100M
+    php_value post_max_size 100M
+    php_value max_execution_time 600
+    php_value max_input_time 600
+    php_value memory_limit 512M
+</IfModule>
+
+# Para PHP-FPM
+<IfModule mod_fcgid.c>
+    FcgidMaxRequestLen 104857600
+</IfModule>

@@ -315,6 +315,41 @@ body {
     border-left: 3px solid #f59e0b;
 }
 
+/* Validation info styles */
+.validation-info {
+    margin-top: 0.5rem;
+    padding: 0.5rem;
+    background: rgba(59, 130, 246, 0.05);
+    border-radius: 6px;
+    border-left: 3px solid var(--primary-blue);
+}
+
+.validation-message {
+    font-size: 0.75rem;
+    padding: 0.25rem 0;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.validation-message:not(:last-child) {
+    border-bottom: 1px solid rgba(59, 130, 246, 0.1);
+}
+
+/* Success messages with checkmark */
+.validation-message:contains("✓") {
+    color: #059669;
+}
+
+/* Warning messages */
+.validation-message:contains("⚠️") {
+    color: #d97706;
+}
+
+/* Info messages */
+.validation-message:contains("ℹ️") {
+    color: var(--primary-blue);
+}
+
 .file-item.file-warning {
     border-color: rgba(251, 191, 36, 0.5);
 }

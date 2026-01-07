@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Symfony\Component\Process\Process;
 use RuntimeException;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Convertidor de PDF para cumplir con requisitos VUCEM
@@ -19,6 +20,7 @@ class VucemPdfConverter
 {
     protected ?string $ghostscriptPath = null;
     protected ?string $pdfimagesPath = null;
+    protected ?string $imageMagickPath = null;
     protected bool $isWindows;
 
     public function __construct()
@@ -29,6 +31,7 @@ class VucemPdfConverter
         // Primero intentar obtener rutas desde config/env, si no autodetectar
         $this->ghostscriptPath = $this->getConfiguredPath('ghostscript') ?: $this->findGhostscript();
         $this->pdfimagesPath = $this->getConfiguredPath('pdfimages') ?: $this->findPdfimages();
+        $this->imageMagickPath = $this->getConfiguredPath('imagemagick') ?: $this->findImageMagick();
     }
     
     /**
@@ -61,9 +64,18 @@ class VucemPdfConverter
 
     /**
      * Convierte un PDF al formato VUCEM (300 DPI exactos, escala de grises, PDF 1.4)
+     * 
+     * ESTRATEGIA MEJORADA: Rasterizar completamente cada página a exactamente 300 DPI
+     * como imagen PNG en escala de grises, luego reconstruir el PDF.
+     * Esto garantiza que TODO (texto, imágenes, vectores) esté a exactamente 300 DPI.
      */
     public function convertToVucem(string $inputPath, string $outputPath): void
     {
+        // Aumentar límite de tiempo y memoria de ejecución
+        set_time_limit(600); // 10 minutos
+        ini_set('max_execution_time', '600');
+        ini_set('memory_limit', '2048M'); // 2GB de memoria
+        
         if (!file_exists($inputPath)) {
             throw new RuntimeException("El archivo de entrada no existe: {$inputPath}");
         }
@@ -75,41 +87,355 @@ class VucemPdfConverter
         $tempDir = $this->createTempDirectory();
 
         try {
-            // PASO 1: Rasterizar PDF a páginas individuales con pdfimage8
-            $pagePattern = $tempDir . DIRECTORY_SEPARATOR . 'page_%d.pdf';
+            // MÉTODO DE RASTERIZACIÓN COMPLETA:
+            // Convertir cada página del PDF a imagen PNG a 300 DPI, 
+            // luego reconstruir el PDF desde las imágenes.
+            // Esto garantiza que TODO (texto e imágenes) esté a exactamente 300 DPI.
             
-            $result = $this->executeGhostscript([
-                '-sDEVICE=pdfimage8',
-                '-r300',
-                '-dCompatibilityLevel=1.4',
-                '-sOutputFile=' . $pagePattern,
-                $inputPath,
+            Log::info('VucemConverter: Iniciando rasterización completa a 300 DPI', [
+                'input' => basename($inputPath),
+                'temp_dir' => $tempDir
             ]);
-
-            // Obtener los PDFs de páginas generados
-            $pagePdfs = glob($tempDir . DIRECTORY_SEPARATOR . 'page_*.pdf');
             
-            if (empty($pagePdfs)) {
-                throw new RuntimeException('No se generaron páginas PDF. Error: ' . $result['error']);
+            // Paso 1: Convertir cada página del PDF a PNG a 300 DPI en escala de grises
+            $pngPattern = $tempDir . '/page_%03d.png';
+            
+            $gsRasterArgs = [
+                '-sDEVICE=pnggray',                      // PNG en escala de grises
+                '-r300',                                  // 300 DPI exactos
+                '-dNOPAUSE',
+                '-dBATCH',
+                '-dSAFER',
+                '-sOutputFile=' . $pngPattern,
+                $inputPath,
+            ];
+            
+            Log::info('VucemConverter: Rasterizando páginas a PNG 300 DPI...');
+            $rasterResult = $this->executeGhostscript($gsRasterArgs);
+            
+            // Contar PNGs generados
+            $pngFiles = glob($tempDir . '/page_*.png');
+            sort($pngFiles, SORT_NATURAL);
+            $pageCount = count($pngFiles);
+            
+            if ($pageCount === 0) {
+                throw new RuntimeException('No se generaron páginas PNG. Error: ' . ($rasterResult['error'] ?? 'desconocido'));
             }
-
-            // Ordenar por número de página
-            usort($pagePdfs, function($a, $b) {
-                preg_match('/page_(\d+)\.pdf$/', $a, $ma);
-                preg_match('/page_(\d+)\.pdf$/', $b, $mb);
-                return intval($ma[1] ?? 0) - intval($mb[1] ?? 0);
-            });
-
-            // PASO 2: Combinar todos los PDFs en uno solo con PDF 1.4
-            $this->mergePdfs($pagePdfs, $outputPath, $tempDir);
-
-            // Verificar que se creó el archivo
-            if (!file_exists($outputPath) || filesize($outputPath) < 100) {
-                throw new RuntimeException('No se pudo generar el archivo PDF de salida.');
+            
+            Log::info('VucemConverter: PNGs generados exitosamente', ['count' => $pageCount]);
+            
+            // Paso 2: Usar ImageMagick si está disponible (MUCHO más rápido)
+            if ($this->imageMagickPath) {
+                Log::info('VucemConverter: Usando ImageMagick para conversión rápida...', [
+                    'path' => $this->imageMagickPath
+                ]);
+                
+                // Intentar primero con calidad media-alta (70)
+                // VUCEM requiere máximo 3 MB
+                $quality = 70;
+                $maxAttempts = 3;
+                $attempt = 0;
+                
+                while ($attempt < $maxAttempts) {
+                    $attempt++;
+                    
+                    // Usar ruta completa de ImageMagick
+                    $imArgs = [$this->imageMagickPath];
+                    
+                    // Agregar archivos PNG
+                    foreach ($pngFiles as $png) {
+                        $imArgs[] = $png;
+                    }
+                    
+                    // Agregar opciones de conversión
+                    $imArgs = array_merge($imArgs, [
+                        '-colorspace', 'Gray',
+                        '-density', '300',
+                        '-units', 'PixelsPerInch',
+                        '-compress', 'JPEG',
+                        '-quality', (string)$quality,
+                        $outputPath
+                    ]);
+                    
+                    Log::info('VucemConverter: Ejecutando ImageMagick', [
+                        'quality' => $quality,
+                        'png_count' => count($pngFiles),
+                        'first_png' => basename($pngFiles[0])
+                    ]);
+                    
+                    // Crear proceso con escapado correcto
+                    $imProcess = new Process($imArgs);
+                    $imProcess->setTimeout(600);
+                    
+                    try {
+                        $imProcess->run();
+                    } catch (\Exception $e) {
+                        Log::warning('VucemConverter: Excepción al ejecutar ImageMagick', [
+                            'exception' => $e->getMessage()
+                        ]);
+                        break;
+                    }
+                    
+                    if (!$imProcess->isSuccessful() || !file_exists($outputPath)) {
+                        Log::warning('VucemConverter: ImageMagick falló', [
+                            'error' => $imProcess->getErrorOutput(),
+                            'output' => $imProcess->getOutput(),
+                            'exit_code' => $imProcess->getExitCode()
+                        ]);
+                        break;
+                    }
+                    
+                    // Verificar tamaño del archivo
+                    $sizeMB = filesize($outputPath) / (1024 * 1024);
+                    Log::info('VucemConverter: PDF generado con ImageMagick', [
+                        'size_mb' => round($sizeMB, 2),
+                        'quality' => $quality,
+                        'attempt' => $attempt
+                    ]);
+                    
+                    // Si está bajo 3 MB, perfecto
+                    if ($sizeMB <= 3.0) {
+                        break;
+                    }
+                    
+                    // Si excede 3 MB, reducir calidad y reintentar
+                    if ($attempt < $maxAttempts) {
+                        Log::warning('VucemConverter: PDF excede 3 MB, reduciendo calidad...', [
+                            'current_size_mb' => round($sizeMB, 2)
+                        ]);
+                        unlink($outputPath);
+                        $quality -= 15; // Reducir calidad (70 -> 55 -> 40)
+                    }
+                }
             }
+            
+            // Si ImageMagick no está disponible o falló, usar TCPDF (PHP puro)
+            if (!$this->imageMagickPath || !file_exists($outputPath)) {
+                Log::info('VucemConverter: Usando TCPDF para crear PDF desde PNGs...');
+                
+                // Intentar con diferentes niveles de calidad JPEG
+                $qualities = [60, 45, 30]; // Calidades para intentar
+                $successfullyCreated = false;
+                
+                foreach ($qualities as $quality) {
+                    // Crear PDF con TCPDF
+                    $pdf = new \TCPDF('P', 'pt', 'A4', true, 'UTF-8', false);
+                    $pdf->SetCreator('VUCEM Converter');
+                    $pdf->SetAuthor('Sistema');
+                    $pdf->SetTitle('Documento VUCEM');
+                    
+                    // Configurar compresión
+                    $pdf->setImageScale(1.0);
+                    $pdf->setJPEGQuality($quality); // Calidad JPEG
+                    $pdf->SetCompression(true);
+                    
+                    // Quitar header/footer
+                    $pdf->setPrintHeader(false);
+                    $pdf->setPrintFooter(false);
+                    $pdf->SetMargins(0, 0, 0);
+                    $pdf->SetAutoPageBreak(false, 0);
+                    
+                    Log::info("VucemConverter: Creando PDF con calidad JPEG {$quality}%...");
+                    
+                    foreach ($pngFiles as $index => $pngFile) {
+                        list($width, $height) = getimagesize($pngFile);
+                        
+                        // Calcular dimensiones en puntos (1 pulgada = 72 puntos, imagen a 300 DPI)
+                        $widthPt = ($width / 300) * 72;
+                        $heightPt = ($height / 300) * 72;
+                        
+                        // Agregar página con tamaño exacto de la imagen
+                        $pdf->AddPage('P', [$widthPt, $heightPt]);
+                        
+                        // Cargar PNG y convertir a JPEG en memoria para reducir tamaño
+                        $image = imagecreatefrompng($pngFile);
+                        if ($image) {
+                            // Convertir a escala de grises
+                            imagefilter($image, IMG_FILTER_GRAYSCALE);
+                            
+                            // Guardar como JPEG temporal
+                            $jpegFile = $tempDir . "/temp_page_{$index}.jpg";
+                            imagejpeg($image, $jpegFile, $quality);
+                            imagedestroy($image);
+                            
+                            // Insertar JPEG en PDF
+                            $pdf->Image($jpegFile, 0, 0, $widthPt, $heightPt, 'JPEG', '', '', false, 300, '', false, false, 0);
+                            
+                            unlink($jpegFile); // Limpiar temporal
+                        }
+                        
+                        if (($index + 1) % 10 === 0) {
+                            Log::info("VucemConverter: Procesadas " . ($index + 1) . "/{$pageCount} páginas");
+                        }
+                    }
+                    
+                    // Guardar PDF
+                    $pdf->Output($outputPath, 'F');
+                    
+                    if (!file_exists($outputPath) || filesize($outputPath) < 1000) {
+                        throw new RuntimeException('TCPDF no pudo generar el archivo');
+                    }
+                    
+                    $sizeMB = round(filesize($outputPath) / (1024 * 1024), 2);
+                    Log::info("VucemConverter: PDF creado con TCPDF (calidad {$quality}%)", [
+                        'size_mb' => $sizeMB
+                    ]);
+                    
+                    // Si está bajo 3 MB, éxito
+                    if ($sizeMB <= 3.0) {
+                        $successfullyCreated = true;
+                        break;
+                    }
+                    
+                    // Si excede y hay más intentos, eliminar y reintentar
+                    if ($quality !== end($qualities)) {
+                        Log::warning("VucemConverter: PDF excede 3 MB ({$sizeMB} MB), reduciendo calidad...");
+                        unlink($outputPath);
+                    }
+                }
+                
+                if (!$successfullyCreated) {
+                    $finalSize = round(filesize($outputPath) / (1024 * 1024), 2);
+                    throw new RuntimeException(
+                        "No se pudo crear un PDF menor a 3 MB. Tamaño mínimo alcanzado: {$finalSize} MB. " .
+                        "El documento tiene demasiadas páginas o imágenes muy grandes."
+                    );
+                }
+            } else {
+                // Ya se creó con ImageMagick, solo necesitamos asegurar compatibilidad PDF 1.4
+                Log::info('VucemConverter: Asegurando PDF 1.4...');
+                $tempOutput = $outputPath . '.tmp';
+                rename($outputPath, $tempOutput);
+                
+                $gsPdfArgs = [
+                    '-sDEVICE=pdfwrite',
+                    '-dCompatibilityLevel=1.4',
+                    '-dNOPAUSE',
+                    '-dBATCH',
+                    '-dSAFER',
+                    '-sColorConversionStrategy=Gray',
+                    '-dProcessColorModel=/DeviceGray',
+                    '-sOutputFile=' . $outputPath,
+                    $tempOutput,
+                ];
+                
+                Log::info('VucemConverter: Convirtiendo a PDF 1.4...');
+                $pdfResult = $this->executeGhostscript($gsPdfArgs);
+            }
+            
+            // Verificar resultado final
+            if (!file_exists($outputPath) || filesize($outputPath) < 1000) {
+                $errorDetail = "No se pudo generar el PDF final. ";
+                if (!empty($pdfResult['error'])) {
+                    $errorDetail .= "GS Error: " . substr($pdfResult['error'], 0, 300);
+                }
+                Log::error('VucemConverter: Error en conversión PNG a PDF', [
+                    'gs_code' => $pdfResult['code'],
+                    'output_exists' => file_exists($outputPath),
+                    'output_size' => file_exists($outputPath) ? filesize($outputPath) : 0
+                ]);
+                throw new RuntimeException($errorDetail);
+            }
+            
+            $outputSizeMB = round(filesize($outputPath) / (1024 * 1024), 2);
+            
+            // VALIDACIÓN CRÍTICA: VUCEM requiere máximo 3 MB
+            if ($outputSizeMB > 3.0) {
+                Log::warning('VucemConverter: PDF excede límite de 3 MB, recomprimiendo...', [
+                    'current_size_mb' => $outputSizeMB
+                ]);
+                
+                // Recomprimir con mayor compresión
+                $tempOutput = $outputPath . '.tmp';
+                rename($outputPath, $tempOutput);
+                
+                $gsCompressArgs = [
+                    '-sDEVICE=pdfwrite',
+                    '-dCompatibilityLevel=1.4',
+                    '-dPDFSETTINGS=/ebook',  // Mayor compresión
+                    '-dNOPAUSE',
+                    '-dBATCH',
+                    '-dSAFER',
+                    '-sColorConversionStrategy=Gray',
+                    '-dProcessColorModel=/DeviceGray',
+                    '-dColorImageResolution=300',
+                    '-dGrayImageResolution=300',
+                    '-dColorImageDownsampleType=/Bicubic',
+                    '-dGrayImageDownsampleType=/Bicubic',
+                    '-dJPEGQ=60',  // Calidad JPEG reducida
+                    '-sOutputFile=' . $outputPath,
+                    $tempOutput,
+                ];
+                
+                $this->executeGhostscript($gsCompressArgs);
+                unlink($tempOutput);
+                
+                $outputSizeMB = round(filesize($outputPath) / (1024 * 1024), 2);
+                
+                if ($outputSizeMB > 3.0) {
+                    throw new RuntimeException(
+                        "El PDF convertido excede el límite de 3 MB requerido por VUCEM. " .
+                        "Tamaño actual: {$outputSizeMB} MB. " .
+                        "Intente con un PDF con menos páginas o imágenes de menor resolución."
+                    );
+                }
+                
+                Log::info('VucemConverter: PDF recomprimido exitosamente', [
+                    'new_size_mb' => $outputSizeMB
+                ]);
+            }
+            
+            Log::info('VucemConverter: Conversión completada exitosamente', [
+                'output_size_mb' => $outputSizeMB,
+                'pages' => $pageCount
+            ]);
 
         } finally {
             $this->cleanupDirectory($tempDir);
+        }
+    }
+
+    /**
+     * Combina múltiples PDFs en uno solo de forma simple y directa
+     */
+    protected function mergePdfsSimple(array $pdfFiles, string $outputPath): void
+    {
+        if (empty($pdfFiles)) {
+            throw new RuntimeException('No hay archivos PDF para combinar.');
+        }
+
+        // Si solo hay un archivo, copiarlo directamente
+        if (count($pdfFiles) === 1) {
+            copy($pdfFiles[0], $outputPath);
+            return;
+        }
+
+        // Combinar todos los PDFs usando Ghostscript con configuración estricta VUCEM
+        $args = [
+            '-sDEVICE=pdfwrite',
+            '-dCompatibilityLevel=1.4',              // PDF 1.4 (NO 1.5, 1.6, 1.7)
+            '-dPDFSETTINGS=/prepress',               // Máxima calidad
+            '-sColorConversionStrategy=Gray',        // Todo a escala de grises
+            '-dProcessColorModel=/DeviceGray',       // Solo grises
+            '-dAutoFilterGrayImages=false',          // NO auto-detectar
+            '-dGrayImageFilter=/FlateEncode',        // Compresión sin pérdida
+            '-dGrayImageResolution=300',             // 300 DPI exactos
+            '-dDownsampleGrayImages=false',          // NO reducir resolución
+            '-dEncodeGrayImages=true',               // Codificar en grises
+            '-dDetectDuplicateImages=false',         // Mantener todas las imágenes
+            '-r300x300',                             // 300 DPI exactos
+            '-sOutputFile=' . $outputPath,
+        ];
+
+        // Agregar todos los archivos PDF
+        foreach ($pdfFiles as $pdf) {
+            $args[] = $pdf;
+        }
+
+        $result = $this->executeGhostscript($args);
+
+        if (!file_exists($outputPath) || filesize($outputPath) < 100) {
+            throw new RuntimeException('No se pudo combinar los PDFs. Error: ' . ($result['error'] ?? 'desconocido'));
         }
     }
 
@@ -244,12 +570,13 @@ class VucemPdfConverter
     }
 
     /**
-     * Valida que el PDF resultante tenga 300 DPI
+     * Valida que el PDF resultante tenga EXACTAMENTE 300 DPI en TODAS las imágenes
+     * Validación estricta: x_dpi === 300 Y y_dpi === 300 (no promedio)
      */
     public function validateDpi(string $pdfPath): array
     {
         if (!$this->pdfimagesPath || !file_exists($pdfPath)) {
-            return ['valid' => false, 'error' => 'No se puede validar'];
+            return ['valid' => false, 'error' => 'No se puede validar - pdfimages no disponible'];
         }
 
         $process = new Process([$this->pdfimagesPath, '-list', $pdfPath]);
@@ -257,39 +584,64 @@ class VucemPdfConverter
         $process->run();
 
         if (!$process->isSuccessful()) {
-            return ['valid' => false, 'error' => 'Error al ejecutar pdfimages'];
+            return [
+                'valid' => false, 
+                'error' => 'Error al ejecutar pdfimages: ' . $process->getErrorOutput()
+            ];
         }
 
         $output = $process->getOutput();
         $lines = explode("\n", $output);
         $images = [];
         $allValid = true;
+        $totalImages = 0;
+        $invalidImages = [];
 
-        foreach ($lines as $line) {
+        foreach ($lines as $lineNum => $line) {
+            // Detectar líneas de imágenes en el output de pdfimages -list
             if (preg_match('/^\s*(\d+)\s+(\d+)\s+(\w+)\s+(\d+)\s+(\d+)\s+(\w+)\s+(\d+)\s+(\d+)\s+\S+\s+\S+\s+\d+\s+\d+\s+(\d+)\s+(\d+)/', $line, $m)) {
+                $totalImages++;
+                $page = intval($m[1]);
                 $xPpi = intval($m[9]);
                 $yPpi = intval($m[10]);
-                $avgDpi = intval(round(($xPpi + $yPpi) / 2));
                 
-                $images[] = [
-                    'page' => intval($m[1]),
+                // VALIDACIÓN ESTRICTA: Ambos deben ser EXACTAMENTE 300
+                $isValid = ($xPpi === 300 && $yPpi === 300);
+                
+                $imageInfo = [
+                    'page' => $page,
+                    'num' => intval($m[2]),
+                    'type' => $m[3],
+                    'width' => intval($m[4]),
+                    'height' => intval($m[5]),
                     'x_dpi' => $xPpi,
                     'y_dpi' => $yPpi,
-                    'avg_dpi' => $avgDpi,
-                    'valid' => ($avgDpi === 300),
+                    'valid' => $isValid,
                 ];
+                
+                $images[] = $imageInfo;
 
-                if ($avgDpi !== 300) {
+                if (!$isValid) {
                     $allValid = false;
+                    $invalidImages[] = $imageInfo;
                 }
             }
         }
 
-        return [
+        $result = [
             'valid' => $allValid,
+            'total_images' => $totalImages,
             'images' => $images,
-            'count' => count($images),
+            'invalid_images' => $invalidImages,
+            'invalid_count' => count($invalidImages),
         ];
+
+        // Si no hay imágenes detectadas, advertir
+        if ($totalImages === 0) {
+            $result['warning'] = 'No se detectaron imágenes en el PDF. Puede ser que el PDF solo contenga vectores o texto.';
+        }
+
+        return $result;
     }
 
     protected function createTempDirectory(): string
@@ -451,6 +803,137 @@ class VucemPdfConverter
         }
 
         return null;
+    }
+
+    /**
+     * Encuentra la instalación de ImageMagick en el sistema
+     */
+    protected function findImageMagick(): ?string
+    {
+        if ($this->isWindows) {
+            // Windows - Intentar diferentes rutas comunes
+            $windowsPaths = [
+                'magick',  // Si está en PATH
+                'C:\\Program Files\\ImageMagick-7.1.2-Q16-HDRI\\magick.exe',
+                'C:\\Program Files\\ImageMagick-7.1.1-Q16-HDRI\\magick.exe',
+                'C:\\Program Files\\ImageMagick\\magick.exe',
+                'C:\\Program Files (x86)\\ImageMagick\\magick.exe',
+            ];
+            
+            foreach ($windowsPaths as $path) {
+                if ($path === 'magick' || file_exists($path)) {
+                    $testProcess = new Process([$path === 'magick' ? 'magick' : $path, '-version']);
+                    try {
+                        $testProcess->run();
+                        if ($testProcess->isSuccessful()) {
+                            return $path === 'magick' ? 'magick' : $path;
+                        }
+                    } catch (\Exception $e) {
+                        continue;
+                    }
+                }
+            }
+        } else {
+            // Linux/Unix
+            $process = Process::fromShellCommandline('convert -version 2>&1');
+            $process->run();
+            $output = $process->getOutput();
+            if (str_contains($output, 'ImageMagick')) {
+                return 'convert';
+            }
+            
+            // Intentar con which
+            $process = Process::fromShellCommandline('which convert 2>/dev/null');
+            $process->run();
+            if ($process->isSuccessful()) {
+                return trim($process->getOutput());
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Valida que el PDF cumpla con TODOS los requisitos de VUCEM
+     */
+    public function validateVucemCompliance(string $pdfPath): array
+    {
+        $result = [
+            'valid' => true,
+            'errors' => [],
+            'warnings' => [],
+        ];
+
+        if (!file_exists($pdfPath)) {
+            return ['valid' => false, 'errors' => ['El archivo no existe']];
+        }
+
+        // 1. Validar tamaño (máximo 3 MB)
+        $fileSize = filesize($pdfPath);
+        $maxSize = 3 * 1024 * 1024; // 3 MB
+        if ($fileSize > $maxSize) {
+            $result['valid'] = false;
+            $sizeMB = round($fileSize / (1024 * 1024), 2);
+            $result['errors'][] = "Tamaño {$sizeMB} MB excede el límite de 3 MB";
+        }
+
+        // 2. Validar versión PDF usando Ghostscript
+        if ($this->ghostscriptPath) {
+            $process = new Process([
+                $this->ghostscriptPath,
+                '-dNODISPLAY',
+                '-dQUIET',
+                '-dNOPAUSE',
+                '-dBATCH',
+                '-c',
+                '(pdfPath) cvn dup where { exch get exec } { pop () } ifelse quit',
+                $pdfPath,
+            ]);
+            $process->setTimeout(30);
+            $process->run();
+            
+            // Leer el header del PDF directamente
+            $handle = fopen($pdfPath, 'r');
+            $header = fread($handle, 1024);
+            fclose($handle);
+            
+            if (preg_match('/%PDF-(\d+\.\d+)/', $header, $matches)) {
+                $version = floatval($matches[1]);
+                if ($version > 1.4) {
+                    $result['valid'] = false;
+                    $result['errors'][] = "Versión PDF {$matches[1]} no permitida (debe ser 1.4)";
+                }
+            }
+        }
+
+        // 3. Validar DPI de las imágenes
+        $dpiValidation = $this->validateDpi($pdfPath);
+        if (isset($dpiValidation['valid']) && !$dpiValidation['valid']) {
+            $result['valid'] = false;
+            if (isset($dpiValidation['error'])) {
+                $result['errors'][] = $dpiValidation['error'];
+            }
+            if (isset($dpiValidation['invalid_count']) && $dpiValidation['invalid_count'] > 0) {
+                $result['errors'][] = "{$dpiValidation['invalid_count']} imágenes no tienen exactamente 300 DPI";
+            }
+        }
+
+        // 4. Detectar color (esto requiere analizar el contenido)
+        if ($this->pdfimagesPath) {
+            $process = new Process([$this->pdfimagesPath, '-list', $pdfPath]);
+            $process->setTimeout(60);
+            $process->run();
+            
+            if ($process->isSuccessful()) {
+                $output = $process->getOutput();
+                // Buscar imágenes en color (no 'gray')
+                if (preg_match('/\s+(rgb|cmyk|icc|idx|jpeg|jp2)\s+/i', $output)) {
+                    $result['warnings'][] = 'El PDF puede contener imágenes en color';
+                }
+            }
+        }
+
+        return $result;
     }
 
     public function getToolsInfo(): array

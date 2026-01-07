@@ -309,12 +309,48 @@ document.addEventListener('DOMContentLoaded', function () {
             item.progress = 100;
 
             if (response.ok) {
-                const result = await response.json();
-                item.status = 'completed';
-                item.downloadUrl = result.downloadUrl || '#'; // Replace with actual download URL from API
-                displayQueue();
+                // Verificar si la respuesta es JSON o un archivo
+                const contentType = response.headers.get('content-type');
+                
+                if (contentType && contentType.includes('application/json')) {
+                    const result = await response.json();
+                    
+                    if (result.success === false) {
+                        throw new Error(result.error || 'Error al convertir el archivo');
+                    }
+                    
+                    item.status = 'completed';
+                    item.downloadUrl = result.downloadUrl || '#';
+                    displayQueue();
+                } else if (contentType && contentType.includes('application/pdf')) {
+                    // Es un PDF descargable directamente
+                    const blob = await response.blob();
+                    const downloadUrl = window.URL.createObjectURL(blob);
+                    
+                    item.status = 'completed';
+                    item.downloadUrl = downloadUrl;
+                    displayQueue();
+                } else {
+                    // Respuesta inesperada (probablemente HTML de error)
+                    const text = await response.text();
+                    console.error('Respuesta inesperada:', text);
+                    throw new Error('Error del servidor. El archivo puede ser demasiado grande o haber un problema de configuración.');
+                }
             } else {
-                throw new Error('Error en la respuesta del servidor');
+                // Intentar obtener mensaje de error del servidor
+                let errorMsg = 'Error en la respuesta del servidor';
+                try {
+                    const contentType = response.headers.get('content-type');
+                    if (contentType && contentType.includes('application/json')) {
+                        const errorData = await response.json();
+                        errorMsg = errorData.error || errorData.message || errorMsg;
+                    } else {
+                        errorMsg = `Error ${response.status}: ${response.statusText}`;
+                    }
+                } catch (e) {
+                    console.error('Error al parsear respuesta:', e);
+                }
+                throw new Error(errorMsg);
             }
         } catch (error) {
             console.error('Error processing file:', error);

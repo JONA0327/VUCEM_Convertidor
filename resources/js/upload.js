@@ -169,6 +169,11 @@ document.addEventListener('DOMContentLoaded', function () {
                             </div>
                         ` : ''}
                         ${item.error ? `<div class="file-error">${item.error}</div>` : ''}
+                        ${item.validationMessages && item.validationMessages.length > 0 ? `
+                            <div class="validation-info">
+                                ${item.validationMessages.map(msg => `<div class="validation-message">${msg}</div>`).join('')}
+                            </div>
+                        ` : ''}
                         ${exceedsSize ? `<div class="file-size-warning">⚠️ Excede el límite de 3 MB de VUCEM. Considera dividir el documento.</div>` : ''}
                     </div>
                     <div class="file-status">
@@ -281,7 +286,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const errors = fileQueue.filter(f => f.status === 'error').length;
 
         if (errors === 0) {
-            alert(`✅ ¡Conversión completada!\n\n${completed} archivo${completed > 1 ? 's convertidos' : ' convertido'} exitosamente.`);
+            alert(`✅ ¡Conversión completada!\n\n${completed} archivo${completed > 1 ? 's convertidos' : ' convertido'} exitosamente.\n\n⚠️ IMPORTANTE: Sube a VUCEM el archivo que termina en "_VUCEM_300DPI.pdf", NO el archivo original.`);
         } else {
             alert(`⚠️ Conversión finalizada\n\n✅ Exitosos: ${completed}\n❌ Fallidos: ${errors}\n\nPuedes reintentar los archivos con error.`);
         }
@@ -322,18 +327,45 @@ document.addEventListener('DOMContentLoaded', function () {
                 // Get the blob from response
                 const blob = await response.blob();
                 const fileName = response.headers.get('X-File-Name') || item.file.name.replace('.pdf', '_VUCEM.pdf');
-                const sizeWarning = response.headers.get('X-Size-Warning');
+                const fileSizeMB = response.headers.get('X-File-Size-MB');
+                const vucemValid = response.headers.get('X-VUCEM-Valid');
+                const validationMessages = response.headers.get('X-Validation-Messages');
+                
+                // Parse validation messages
+                let validationInfo = [];
+                if (validationMessages) {
+                    try {
+                        validationInfo = JSON.parse(validationMessages);
+                    } catch (e) {
+                        console.warn('No se pudieron parsear mensajes de validación', e);
+                    }
+                }
                 
                 item.status = 'completed';
                 item.downloadBlob = blob;
                 item.downloadName = fileName;
-                item.downloadUrl = true; // Flag to show download button
-                item.sizeWarning = sizeWarning; // Advertencia de tamaño si existe
-                item.outputSize = blob.size; // Tamaño del archivo de salida
+                item.downloadUrl = true;
+                item.outputSize = blob.size;
+                item.fileSizeMB = fileSizeMB;
+                item.vucemValid = vucemValid === 'true';
+                item.validationMessages = validationInfo;
                 displayQueue();
+                
+                // Auto-descargar archivo convertido
+                console.log('✅ Archivo convertido:', fileName);
+                window.downloadFile(item.id.toString());
             } else {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Error en la respuesta del servidor');
+                // Intentar parsear JSON, si falla mostrar error genérico
+                let errorMessage = 'Error en la respuesta del servidor';
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.error || errorMessage;
+                } catch (e) {
+                    // Si no es JSON, el servidor devolvió HTML (error 500)
+                    errorMessage = `Error del servidor (${response.status}). Revisa la consola del navegador.`;
+                    console.error('Respuesta del servidor no es JSON. Status:', response.status);
+                }
+                throw new Error(errorMessage);
             }
         } catch (error) {
             console.error('Error processing file:', error);

@@ -23,4 +23,5 @@ return [
     'ghostscript' => env('GHOSTSCRIPT_PATH', ''),
     'pdfimages' => env('PDFIMAGES_PATH', ''),
     'qpdf' => env('QPDF_PATH', ''),
+    'imagemagick' => env('IMAGEMAGICK_PATH', ''),
 ];

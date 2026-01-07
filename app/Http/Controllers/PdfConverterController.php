@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\VucemPdfConverter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 
 class PdfConverterController extends Controller
 {
@@ -41,6 +42,9 @@ class PdfConverterController extends Controller
         $file = $request->file('file');
         $originalName = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
         
+        // Obtener tamaño ANTES de mover el archivo
+        $originalSize = $file->getSize();
+        
         // Crear nombres únicos para los archivos
         $uniqueId = uniqid();
         $inputFileName = $uniqueId . '_input.pdf';
@@ -60,22 +64,63 @@ class PdfConverterController extends Controller
         $file->move($tempDir, $inputFileName);
         
         try {
-            // Convertir usando el servicio VucemPdfConverter (300 DPI exactos)
+            Log::info('PdfConverter: Iniciando conversión', [
+                'original_name' => $originalName,
+                'size_mb' => round($originalSize / (1024 * 1024), 2)
+            ]);
+            
+            // Convertir usando el servicio VucemPdfConverter (300 DPI exactos en TODO)
             $this->converter->convertToVucem($inputPath, $outputPath);
+            
+            Log::info('PdfConverter: Conversión completada', [
+                'output_exists' => file_exists($outputPath),
+                'output_size' => file_exists($outputPath) ? filesize($outputPath) : 0
+            ]);
             
             // Verificar que el archivo se creó
             if (!file_exists($outputPath)) {
                 throw new \Exception('Error al convertir el archivo.');
             }
             
-            // Verificar tamaño del archivo de salida
-            $fileSize = filesize($outputPath);
+            // VALIDACIÓN ESTRICTA: Verificar que cumple con TODOS los requisitos VUCEM
+            $validation = $this->converter->validateVucemCompliance($outputPath);
             
-            // Advertencia si excede el tamaño
-            $sizeWarning = null;
+            // Obtener tamaño del archivo
+            $fileSize = filesize($outputPath);
+            $sizeMB = round($fileSize / (1024 * 1024), 2);
+            
+            // Construir mensajes de validación
+            $validationMessages = [];
+            
+            if (!$validation['valid']) {
+                // Si hay errores críticos, agregar advertencias
+                foreach ($validation['errors'] as $error) {
+                    $validationMessages[] = "⚠️ " . $error;
+                }
+            }
+            
+            // Agregar warnings si existen
+            if (!empty($validation['warnings'])) {
+                foreach ($validation['warnings'] as $warning) {
+                    $validationMessages[] = "ℹ️ " . $warning;
+                }
+            }
+            
+            // Validación adicional de DPI
+            $dpiValidation = $this->converter->validateDpi($outputPath);
+            if (isset($dpiValidation['total_images']) && $dpiValidation['total_images'] > 0) {
+                if ($dpiValidation['valid']) {
+                    $validationMessages[] = "✓ Todas las imágenes ({$dpiValidation['total_images']}) están a exactamente 300 DPI";
+                } else {
+                    $validationMessages[] = "⚠️ {$dpiValidation['invalid_count']} de {$dpiValidation['total_images']} imágenes NO están a 300 DPI exactos";
+                }
+            }
+            
+            // Mensaje de tamaño
             if ($fileSize > self::MAX_OUTPUT_SIZE) {
-                $sizeMB = round($fileSize / (1024 * 1024), 2);
-                $sizeWarning = "El archivo resultante ({$sizeMB} MB) excede el límite de 3 MB de VUCEM. Considera dividir el documento.";
+                $validationMessages[] = "⚠️ Archivo {$sizeMB} MB excede límite de 3 MB de VUCEM";
+            } else {
+                $validationMessages[] = "✓ Tamaño: {$sizeMB} MB (dentro del límite)";
             }
             
             // Leer el archivo convertido
@@ -87,15 +132,20 @@ class PdfConverterController extends Controller
             // Nombre del archivo de salida
             $downloadName = $originalName . '_VUCEM_300DPI.pdf';
             
-            // Devolver el archivo para descarga
+            // Devolver el archivo para descarga con headers de validación
             $response = response($convertedContent)
                 ->header('Content-Type', 'application/pdf')
                 ->header('Content-Disposition', 'attachment; filename="' . $downloadName . '"')
-                ->header('Content-Length', strlen($convertedContent))
-                ->header('X-File-Name', $downloadName);
+                ->header('Content-Length', $fileSize)
+                ->header('X-File-Name', $downloadName)
+                ->header('X-File-Size-MB', $sizeMB)
+                ->header('X-VUCEM-Valid', $validation['valid'] ? 'true' : 'false')
+                ->header('Cache-Control', 'no-cache, must-revalidate')
+                ->header('Pragma', 'public');
             
-            if ($sizeWarning) {
-                $response->header('X-Size-Warning', $sizeWarning);
+            // Agregar mensajes de validación como headers
+            if (!empty($validationMessages)) {
+                $response->header('X-Validation-Messages', json_encode($validationMessages));
             }
             
             return $response;
