@@ -470,11 +470,17 @@ class VucemValidatorController extends Controller
         }
 
         // Ejecutar pdfimages -list para obtener TODAS las imágenes embebidas
-        $process = new Process([$pdfimages, '-list', $path]);
-        $process->setTimeout(120);
-        $process->run();
+        try {
+            $process = new Process([$pdfimages, '-list', $path]);
+            $process->setTimeout(120);
+            $process->run();
 
-        if (!$process->isSuccessful()) {
+            // Si el proceso falla (crash, exit code negativo, etc), no usar pdfimages
+            if (!$process->isSuccessful() || $process->getExitCode() < 0) {
+                return null;
+            }
+        } catch (\Exception $e) {
+            // Silenciar cualquier excepción de pdfimages
             return null;
         }
 

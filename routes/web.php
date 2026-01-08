@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\PdfConverterController;
 use App\Http\Controllers\VucemValidatorController;
+use App\Http\Controllers\VucemImageExtractorController;
 use App\Services\VucemPdfConverter;
 
 // Página principal con menú
@@ -16,6 +17,13 @@ Route::get('/convertidor', function () {
 })->name('convertidor');
 
 Route::post('/convert', [PdfConverterController::class, 'convert'])->name('pdf.convert');
+
+// Extractor de imágenes
+Route::get('/extraer-imagenes', function () {
+    return view('extract_images');
+})->name('extraer.imagenes');
+
+Route::post('/extract-images', [VucemImageExtractorController::class, 'convert'])->name('images.extract');
 
 // Validador
 Route::get('/validador', [VucemValidatorController::class, 'index'])->name('validador');

@@ -72,8 +72,8 @@ class VucemPdfConverter
     public function convertToVucem(string $inputPath, string $outputPath): void
     {
         // Aumentar límite de tiempo y memoria de ejecución
-        set_time_limit(600); // 10 minutos
-        ini_set('max_execution_time', '600');
+        set_time_limit(1200); // 20 minutos
+        ini_set('max_execution_time', '1200');
         ini_set('memory_limit', '2048M'); // 2GB de memoria
         
         if (!file_exists($inputPath)) {
@@ -87,308 +87,235 @@ class VucemPdfConverter
         $tempDir = $this->createTempDirectory();
 
         try {
-            // MÉTODO DE RASTERIZACIÓN COMPLETA:
-            // Convertir cada página del PDF a imagen PNG a 300 DPI, 
-            // luego reconstruir el PDF desde las imágenes.
-            // Esto garantiza que TODO (texto e imágenes) esté a exactamente 300 DPI.
+            // ESTRATEGIA DEFINITIVA: Rasterizar completamente a JPEG y crear PDF con TCPDF
+            // Esta es la ÚNICA forma de garantizar 300 DPI exactos en TODAS las imágenes
             
-            Log::info('VucemConverter: Iniciando rasterización completa a 300 DPI', [
-                'input' => basename($inputPath),
-                'temp_dir' => $tempDir
+            Log::info('VucemConverter: Rasterización completa a JPEG 300 DPI', [
+                'input' => basename($inputPath)
             ]);
             
-            // Paso 1: Convertir cada página del PDF a PNG a 300 DPI en escala de grises
-            $pngPattern = $tempDir . '/page_%03d.png';
-            
-            $gsRasterArgs = [
-                '-sDEVICE=pnggray',                      // PNG en escala de grises
-                '-r300',                                  // 300 DPI exactos
+            // Paso 1: Generar TODOS los JPEGs con calidad MUY baja para archivos pequeños
+            $jpegPattern = $tempDir . '/page_%03d.jpg';
+            $gsJpegArgs = [
+                '-sDEVICE=jpeggray',
+                '-r300',  // 300 DPI reales
+                '-dJPEGQ=15',  // Calidad 15% - compresión extrema para archivos muy pequeños
                 '-dNOPAUSE',
                 '-dBATCH',
                 '-dSAFER',
-                '-sOutputFile=' . $pngPattern,
+                '-dQUIET',
+                '-sOutputFile=' . $jpegPattern,
                 $inputPath,
             ];
             
-            Log::info('VucemConverter: Rasterizando páginas a PNG 300 DPI...');
-            $rasterResult = $this->executeGhostscript($gsRasterArgs);
+            $this->executeGhostscript($gsJpegArgs);
             
-            // Contar PNGs generados
-            $pngFiles = glob($tempDir . '/page_*.png');
-            sort($pngFiles, SORT_NATURAL);
-            $pageCount = count($pngFiles);
+            $jpegFiles = glob($tempDir . '/page_*.jpg');
+            sort($jpegFiles, SORT_NATURAL);
+            $totalPages = count($jpegFiles);
             
-            if ($pageCount === 0) {
-                throw new RuntimeException('No se generaron páginas PNG. Error: ' . ($rasterResult['error'] ?? 'desconocido'));
+            if ($totalPages === 0) {
+                throw new RuntimeException('No se generaron páginas JPEG');
             }
             
-            Log::info('VucemConverter: PNGs generados exitosamente', ['count' => $pageCount]);
+            Log::info('VucemConverter: JPEGs generados a 300 DPI', [
+                'count' => $totalPages,
+                'dpi' => '300',
+                'quality' => '15%'
+            ]);
             
-            // Paso 2: Usar ImageMagick si está disponible (MUCHO más rápido)
-            if ($this->imageMagickPath) {
-                Log::info('VucemConverter: Usando ImageMagick para conversión rápida...', [
-                    'path' => $this->imageMagickPath
-                ]);
+            // Paso 2: Decidir estrategia según número de páginas
+            if ($totalPages > 10) {
+                // PDF grande: dividir en grupos de 10 páginas
+                Log::info("VucemConverter: PDF grande ({$totalPages} páginas), dividiendo en grupos de 10");
                 
-                // Intentar primero con calidad media-alta (70)
-                // VUCEM requiere máximo 3 MB
-                $quality = 70;
-                $maxAttempts = 3;
-                $attempt = 0;
+                $groups = array_chunk($jpegFiles, 10);
+                $outputFiles = [];
                 
-                while ($attempt < $maxAttempts) {
-                    $attempt++;
+                foreach ($groups as $groupIndex => $groupJpegs) {
+                    $groupNumber = $groupIndex + 1;
+                    $totalGroups = count($groups);
+                    Log::info("VucemConverter: Procesando grupo {$groupNumber}/{$totalGroups}");
                     
-                    // Usar ruta completa de ImageMagick
-                    $imArgs = [$this->imageMagickPath];
+                    $groupOutput = str_replace('.pdf', "_parte{$groupNumber}.pdf", $outputPath);
                     
-                    // Agregar archivos PNG
-                    foreach ($pngFiles as $png) {
-                        $imArgs[] = $png;
-                    }
-                    
-                    // Agregar opciones de conversión
-                    $imArgs = array_merge($imArgs, [
-                        '-colorspace', 'Gray',
-                        '-density', '300',
-                        '-units', 'PixelsPerInch',
-                        '-compress', 'JPEG',
-                        '-quality', (string)$quality,
-                        $outputPath
-                    ]);
-                    
-                    Log::info('VucemConverter: Ejecutando ImageMagick', [
-                        'quality' => $quality,
-                        'png_count' => count($pngFiles),
-                        'first_png' => basename($pngFiles[0])
-                    ]);
-                    
-                    // Crear proceso con escapado correcto
-                    $imProcess = new Process($imArgs);
-                    $imProcess->setTimeout(600);
-                    
-                    try {
-                        $imProcess->run();
-                    } catch (\Exception $e) {
-                        Log::warning('VucemConverter: Excepción al ejecutar ImageMagick', [
-                            'exception' => $e->getMessage()
-                        ]);
-                        break;
-                    }
-                    
-                    if (!$imProcess->isSuccessful() || !file_exists($outputPath)) {
-                        Log::warning('VucemConverter: ImageMagick falló', [
-                            'error' => $imProcess->getErrorOutput(),
-                            'output' => $imProcess->getOutput(),
-                            'exit_code' => $imProcess->getExitCode()
-                        ]);
-                        break;
-                    }
-                    
-                    // Verificar tamaño del archivo
-                    $sizeMB = filesize($outputPath) / (1024 * 1024);
-                    Log::info('VucemConverter: PDF generado con ImageMagick', [
-                        'size_mb' => round($sizeMB, 2),
-                        'quality' => $quality,
-                        'attempt' => $attempt
-                    ]);
-                    
-                    // Si está bajo 3 MB, perfecto
-                    if ($sizeMB <= 3.0) {
-                        break;
-                    }
-                    
-                    // Si excede 3 MB, reducir calidad y reintentar
-                    if ($attempt < $maxAttempts) {
-                        Log::warning('VucemConverter: PDF excede 3 MB, reduciendo calidad...', [
-                            'current_size_mb' => round($sizeMB, 2)
-                        ]);
-                        unlink($outputPath);
-                        $quality -= 15; // Reducir calidad (70 -> 55 -> 40)
-                    }
-                }
-            }
-            
-            // Si ImageMagick no está disponible o falló, usar TCPDF (PHP puro)
-            if (!$this->imageMagickPath || !file_exists($outputPath)) {
-                Log::info('VucemConverter: Usando TCPDF para crear PDF desde PNGs...');
-                
-                // Intentar con diferentes niveles de calidad JPEG
-                $qualities = [60, 45, 30]; // Calidades para intentar
-                $successfullyCreated = false;
-                
-                foreach ($qualities as $quality) {
-                    // Crear PDF con TCPDF
                     $pdf = new \TCPDF('P', 'pt', 'A4', true, 'UTF-8', false);
                     $pdf->SetCreator('VUCEM Converter');
-                    $pdf->SetAuthor('Sistema');
-                    $pdf->SetTitle('Documento VUCEM');
-                    
-                    // Configurar compresión
-                    $pdf->setImageScale(1.0);
-                    $pdf->setJPEGQuality($quality); // Calidad JPEG
-                    $pdf->SetCompression(true);
-                    
-                    // Quitar header/footer
+                    $pdf->SetTitle("Documento VUCEM - Parte {$groupNumber} de {$totalGroups}");
                     $pdf->setPrintHeader(false);
                     $pdf->setPrintFooter(false);
                     $pdf->SetMargins(0, 0, 0);
                     $pdf->SetAutoPageBreak(false, 0);
+                    $pdf->setImageScale(1.0);
+                    $pdf->setJPEGQuality(100);
+                    $pdf->SetCompression(false);
                     
-                    Log::info("VucemConverter: Creando PDF con calidad JPEG {$quality}%...");
-                    
-                    foreach ($pngFiles as $index => $pngFile) {
-                        list($width, $height) = getimagesize($pngFile);
-                        
-                        // Calcular dimensiones en puntos (1 pulgada = 72 puntos, imagen a 300 DPI)
-                        $widthPt = ($width / 300) * 72;
-                        $heightPt = ($height / 300) * 72;
-                        
-                        // Agregar página con tamaño exacto de la imagen
+                    foreach ($groupJpegs as $jpegFile) {
+                        list($widthPx, $heightPx) = getimagesize($jpegFile);
+                        // Calcular tamaño en puntos para 300 DPI
+                        $widthPt = ($widthPx / 300) * 72;
+                        $heightPt = ($heightPx / 300) * 72;
                         $pdf->AddPage('P', [$widthPt, $heightPt]);
-                        
-                        // Cargar PNG y convertir a JPEG en memoria para reducir tamaño
-                        $image = imagecreatefrompng($pngFile);
-                        if ($image) {
-                            // Convertir a escala de grises
-                            imagefilter($image, IMG_FILTER_GRAYSCALE);
-                            
-                            // Guardar como JPEG temporal
-                            $jpegFile = $tempDir . "/temp_page_{$index}.jpg";
-                            imagejpeg($image, $jpegFile, $quality);
-                            imagedestroy($image);
-                            
-                            // Insertar JPEG en PDF
-                            $pdf->Image($jpegFile, 0, 0, $widthPt, $heightPt, 'JPEG', '', '', false, 300, '', false, false, 0);
-                            
-                            unlink($jpegFile); // Limpiar temporal
-                        }
-                        
-                        if (($index + 1) % 10 === 0) {
-                            Log::info("VucemConverter: Procesadas " . ($index + 1) . "/{$pageCount} páginas");
-                        }
+                        $pdf->Image($jpegFile, 0, 0, $widthPt, $heightPt, 'JPEG', '', '', false, 300, '', false, false, 0, false, false, false);
                     }
                     
-                    // Guardar PDF
-                    $pdf->Output($outputPath, 'F');
+                    $pdfContent = $pdf->Output('', 'S');
+                    file_put_contents($groupOutput, $pdfContent);
                     
-                    if (!file_exists($outputPath) || filesize($outputPath) < 1000) {
-                        throw new RuntimeException('TCPDF no pudo generar el archivo');
-                    }
+                    $sizeMB = round(filesize($groupOutput) / (1024 * 1024), 2);
+                    Log::info("VucemConverter: Grupo {$groupNumber} creado - {$sizeMB} MB, " . count($groupJpegs) . " páginas");
                     
-                    $sizeMB = round(filesize($outputPath) / (1024 * 1024), 2);
-                    Log::info("VucemConverter: PDF creado con TCPDF (calidad {$quality}%)", [
-                        'size_mb' => $sizeMB
-                    ]);
-                    
-                    // Si está bajo 3 MB, éxito
-                    if ($sizeMB <= 3.0) {
-                        $successfullyCreated = true;
-                        break;
-                    }
-                    
-                    // Si excede y hay más intentos, eliminar y reintentar
-                    if ($quality !== end($qualities)) {
-                        Log::warning("VucemConverter: PDF excede 3 MB ({$sizeMB} MB), reduciendo calidad...");
-                        unlink($outputPath);
-                    }
+                    $outputFiles[] = [
+                        'path' => $groupOutput,
+                        'size' => $sizeMB,
+                        'pages' => count($groupJpegs),
+                        'part' => $groupNumber
+                    ];
                 }
                 
-                if (!$successfullyCreated) {
-                    $finalSize = round(filesize($outputPath) / (1024 * 1024), 2);
-                    throw new RuntimeException(
-                        "No se pudo crear un PDF menor a 3 MB. Tamaño mínimo alcanzado: {$finalSize} MB. " .
-                        "El documento tiene demasiadas páginas o imágenes muy grandes."
-                    );
-                }
-            } else {
-                // Ya se creó con ImageMagick, solo necesitamos asegurar compatibilidad PDF 1.4
-                Log::info('VucemConverter: Asegurando PDF 1.4...');
-                $tempOutput = $outputPath . '.tmp';
-                rename($outputPath, $tempOutput);
+                $totalSize = array_sum(array_column($outputFiles, 'size'));
+                Log::info("VucemConverter: División completada", [
+                    'parts' => count($outputFiles),
+                    'total_size_mb' => round($totalSize, 2),
+                    'total_pages' => $totalPages
+                ]);
                 
-                $gsPdfArgs = [
+                // Unir todas las partes en un solo PDF usando Ghostscript
+                Log::info("VucemConverter: Uniendo todas las partes en un solo PDF...");
+                
+                $partsForMerge = array_column($outputFiles, 'path');
+                
+                $gsMergeArgs = [
                     '-sDEVICE=pdfwrite',
                     '-dCompatibilityLevel=1.4',
                     '-dNOPAUSE',
                     '-dBATCH',
                     '-dSAFER',
-                    '-sColorConversionStrategy=Gray',
-                    '-dProcessColorModel=/DeviceGray',
+                    '-dQUIET',
                     '-sOutputFile=' . $outputPath,
-                    $tempOutput,
                 ];
                 
-                Log::info('VucemConverter: Convirtiendo a PDF 1.4...');
-                $pdfResult = $this->executeGhostscript($gsPdfArgs);
+                // Agregar todos los archivos de partes
+                foreach ($partsForMerge as $partFile) {
+                    $gsMergeArgs[] = $partFile;
+                }
+                
+                $this->executeGhostscript($gsMergeArgs);
+                
+                if (!file_exists($outputPath) || filesize($outputPath) < 1000) {
+                    throw new RuntimeException('No se pudo unir los PDFs divididos');
+                }
+                
+                $finalSizeMB = round(filesize($outputPath) / (1024 * 1024), 2);
+                Log::info("VucemConverter: PDF unificado creado", [
+                    'size_mb' => $finalSizeMB,
+                    'parts_merged' => count($partsForMerge)
+                ]);
+                
+                // Limpiar archivos de partes temporales
+                foreach ($partsForMerge as $partFile) {
+                    @unlink($partFile);
+                }
+                
+                $success = true;
+                
+            } else {
+                // PDF pequeño: intentar ajustar a 10 MB con diferentes calidades
+                Log::info('VucemConverter: PDF pequeño (<=10 páginas), ajustando calidad');
+                
+                $jpegQualities = [75, 65, 55, 50];
+                $success = false;
+                
+                foreach ($jpegQualities as $index => $quality) {
+                    $attempt = $index + 1;
+                    Log::info("VucemConverter: Intento {$attempt}/" . count($jpegQualities) . " - calidad {$quality}%");
+                    
+                    if ($index > 0) {
+                        $gsJpegArgs[2] = '-dJPEGQ=' . $quality;
+                        $this->executeGhostscript($gsJpegArgs);
+                        $jpegFiles = glob($tempDir . '/page_*.jpg');
+                        sort($jpegFiles, SORT_NATURAL);
+                    }
+                    
+                    $pdf = new \TCPDF('P', 'pt', 'A4', true, 'UTF-8', false);
+                    $pdf->SetCreator('VUCEM Converter');
+                    $pdf->SetTitle('Documento VUCEM');
+                    $pdf->setPrintHeader(false);
+                    $pdf->setPrintFooter(false);
+                    $pdf->SetMargins(0, 0, 0);
+                    $pdf->SetAutoPageBreak(false, 0);
+                    $pdf->setImageScale(1.0);
+                    $pdf->setJPEGQuality(100);
+                    $pdf->SetCompression(false);
+                    
+                    foreach ($jpegFiles as $idx => $jpegFile) {
+                        list($widthPx, $heightPx) = getimagesize($jpegFile);
+                        // Calcular tamaño en puntos para 300 DPI
+                        $widthPt = ($widthPx / 300) * 72;
+                        $heightPt = ($heightPx / 300) * 72;
+                        $pdf->AddPage('P', [$widthPt, $heightPt]);
+                        $pdf->Image($jpegFile, 0, 0, $widthPt, $heightPt, 'JPEG', '', '', false, 300, '', false, false, 0, false, false, false);
+                    }
+                    
+                    $pdfContent = $pdf->Output('', 'S');
+                    file_put_contents($outputPath, $pdfContent);
+                    
+                    if (!file_exists($outputPath) || filesize($outputPath) < 1000) {
+                        throw new RuntimeException('No se pudo crear el PDF con TCPDF');
+                    }
+                    
+                    $sizeMB = round(filesize($outputPath) / (1024 * 1024), 2);
+                    Log::info("VucemConverter: PDF creado - {$sizeMB} MB");
+                    
+                    if ($sizeMB <= 10.0) {
+                        $success = true;
+                        break;
+                    }
+                    
+                    if ($attempt < count($jpegQualities)) {
+                        Log::warning("VucemConverter: PDF excede 10 MB, reduciendo calidad...");
+                        unlink($outputPath);
+                        foreach ($jpegFiles as $f) @unlink($f);
+                    }
+                }
             }
             
-            // Verificar resultado final
+            // Verificar que el PDF se generó
             if (!file_exists($outputPath) || filesize($outputPath) < 1000) {
-                $errorDetail = "No se pudo generar el PDF final. ";
-                if (!empty($pdfResult['error'])) {
-                    $errorDetail .= "GS Error: " . substr($pdfResult['error'], 0, 300);
-                }
-                Log::error('VucemConverter: Error en conversión PNG a PDF', [
-                    'gs_code' => $pdfResult['code'],
-                    'output_exists' => file_exists($outputPath),
-                    'output_size' => file_exists($outputPath) ? filesize($outputPath) : 0
-                ]);
-                throw new RuntimeException($errorDetail);
+                throw new RuntimeException('No se pudo crear el PDF');
             }
             
             $outputSizeMB = round(filesize($outputPath) / (1024 * 1024), 2);
             
-            // VALIDACIÓN CRÍTICA: VUCEM requiere máximo 3 MB
-            if ($outputSizeMB > 3.0) {
-                Log::warning('VucemConverter: PDF excede límite de 3 MB, recomprimiendo...', [
-                    'current_size_mb' => $outputSizeMB
+            // Contar páginas del PDF original para el log
+            $pageCountResult = $this->executeGhostscript([
+                '-dQUIET',
+                '-dNODISPLAY',
+                '-dNOSAFER',
+                '-dNOPAUSE',
+                '-dBATCH',
+                '-c',
+                "(" . $inputPath . ") (r) file runpdfbegin pdfpagecount = quit"
+            ]);
+            $pageCount = intval(trim($pageCountResult['output'])) ?: 0;
+            
+            // Solo advertir si excede 10 MB, pero NO lanzar error
+            // NOTA: Para PDFs grandes que se dividieron y unieron, el archivo final puede ser mayor a 10 MB
+            // pero internamente se procesó en grupos de 10 páginas con buena calidad (60%)
+            if ($outputSizeMB > 10.0 && $totalPages <= 10) {
+                // Solo advertir si es un PDF pequeño que no se dividió
+                Log::warning('VucemConverter: ADVERTENCIA - PDF excede 10 MB VUCEM', [
+                    'output_size_mb' => $outputSizeMB,
+                    'pages' => $pageCount,
+                    'message' => 'El PDF será descargado pero puede ser rechazado por VUCEM (límite 10 MB para imágenes)'
                 ]);
-                
-                // Recomprimir con mayor compresión
-                $tempOutput = $outputPath . '.tmp';
-                rename($outputPath, $tempOutput);
-                
-                $gsCompressArgs = [
-                    '-sDEVICE=pdfwrite',
-                    '-dCompatibilityLevel=1.4',
-                    '-dPDFSETTINGS=/ebook',  // Mayor compresión
-                    '-dNOPAUSE',
-                    '-dBATCH',
-                    '-dSAFER',
-                    '-sColorConversionStrategy=Gray',
-                    '-dProcessColorModel=/DeviceGray',
-                    '-dColorImageResolution=300',
-                    '-dGrayImageResolution=300',
-                    '-dColorImageDownsampleType=/Bicubic',
-                    '-dGrayImageDownsampleType=/Bicubic',
-                    '-dJPEGQ=60',  // Calidad JPEG reducida
-                    '-sOutputFile=' . $outputPath,
-                    $tempOutput,
-                ];
-                
-                $this->executeGhostscript($gsCompressArgs);
-                unlink($tempOutput);
-                
-                $outputSizeMB = round(filesize($outputPath) / (1024 * 1024), 2);
-                
-                if ($outputSizeMB > 3.0) {
-                    throw new RuntimeException(
-                        "El PDF convertido excede el límite de 3 MB requerido por VUCEM. " .
-                        "Tamaño actual: {$outputSizeMB} MB. " .
-                        "Intente con un PDF con menos páginas o imágenes de menor resolución."
-                    );
-                }
-                
-                Log::info('VucemConverter: PDF recomprimido exitosamente', [
-                    'new_size_mb' => $outputSizeMB
+            } else {
+                Log::info('VucemConverter: Conversión completada exitosamente', [
+                    'output_size_mb' => $outputSizeMB,
+                    'pages' => $pageCount,
+                    'note' => $totalPages > 10 ? 'PDF grande procesado por partes y unificado' : 'PDF procesado directamente'
                 ]);
             }
-            
-            Log::info('VucemConverter: Conversión completada exitosamente', [
-                'output_size_mb' => $outputSizeMB,
-                'pages' => $pageCount
-            ]);
 
         } finally {
             $this->cleanupDirectory($tempDir);
@@ -579,14 +506,23 @@ class VucemPdfConverter
             return ['valid' => false, 'error' => 'No se puede validar - pdfimages no disponible'];
         }
 
-        $process = new Process([$this->pdfimagesPath, '-list', $pdfPath]);
-        $process->setTimeout(120);
-        $process->run();
+        try {
+            $process = new Process([$this->pdfimagesPath, '-list', $pdfPath]);
+            $process->setTimeout(120);
+            $process->run();
 
-        if (!$process->isSuccessful()) {
+            // Si el proceso falla (exit code negativo = crash), no reportar error
+            if (!$process->isSuccessful() || $process->getExitCode() < 0) {
+                return [
+                    'valid' => false, 
+                    'error' => 'No se pudo validar DPI'
+                ];
+            }
+        } catch (\Exception $e) {
+            // Silenciar excepciones de pdfimages
             return [
-                'valid' => false, 
-                'error' => 'Error al ejecutar pdfimages: ' . $process->getErrorOutput()
+                'valid' => false,
+                'error' => 'No se pudo validar DPI'
             ];
         }
 

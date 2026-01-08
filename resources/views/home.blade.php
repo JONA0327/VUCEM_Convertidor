@@ -35,7 +35,7 @@
 
         <!-- Menu Cards -->
         <div class="menu-grid">
-            <!-- Card Convertidor -->
+            <!-- Card Convertidor Normal -->
             <a href="{{ route('convertidor') }}" class="menu-card">
                 <div class="menu-card-icon convert-icon">
                     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -45,8 +45,8 @@
                         <path d="M12 12V18" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
                 </div>
-                <h2>🎯 Convertir PDF</h2>
-                <p>Convierte tus documentos PDF al formato VUCEM con 300 DPI exactos</p>
+                <h2>🎯 Convertir PDF General</h2>
+                <p>Para documentos mixtos (texto + imágenes estándar)</p>
                 <div class="menu-card-features">
                     <span>✓ 300 DPI EXACTOS</span>
                     <span>✓ PDF versión 1.4</span>
@@ -55,6 +55,28 @@
                 </div>
                 <div class="menu-card-action">
                     Ir al Convertidor →
+                </div>
+            </a>
+
+            <!-- Card Extractor de Imágenes -->
+            <a href="{{ route('extraer.imagenes') }}" class="menu-card">
+                <div class="menu-card-icon" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="3" y="3" width="18" height="18" rx="2" stroke="white" stroke-width="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5" fill="white"/>
+                        <path d="M21 15L16 10L5 21" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                <h2>📸 Extraer Imágenes</h2>
+                <p>Extrae todas las páginas del PDF como imágenes JPEG a 300 DPI</p>
+                <div class="menu-card-features">
+                    <span>✓ 300 DPI por imagen</span>
+                    <span>✓ Formato JPEG (25%)</span>
+                    <span>✓ Descarga en ZIP</span>
+                    <span>✓ Nombres descriptivos</span>
+                </div>
+                <div class="menu-card-action">
+                    Extraer Imágenes →
                 </div>
             </a>
 

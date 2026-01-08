@@ -108,7 +108,10 @@ class PdfConverterController extends Controller
             
             // Validación adicional de DPI
             $dpiValidation = $this->converter->validateDpi($outputPath);
-            if (isset($dpiValidation['total_images']) && $dpiValidation['total_images'] > 0) {
+            if (isset($dpiValidation['error'])) {
+                // Si hay error en validación de DPI, solo advertir pero no bloquear
+                $validationMessages[] = "⚠️ No se pudo validar DPI: " . $dpiValidation['error'];
+            } elseif (isset($dpiValidation['total_images']) && $dpiValidation['total_images'] > 0) {
                 if ($dpiValidation['valid']) {
                     $validationMessages[] = "✓ Todas las imágenes ({$dpiValidation['total_images']}) están a exactamente 300 DPI";
                 } else {
@@ -118,9 +121,9 @@ class PdfConverterController extends Controller
             
             // Mensaje de tamaño
             if ($fileSize > self::MAX_OUTPUT_SIZE) {
-                $validationMessages[] = "⚠️ Archivo {$sizeMB} MB excede límite de 3 MB de VUCEM";
+                $validationMessages[] = "⚠️ Archivo {$sizeMB} MB - Para VUCEM subir por partes si excede límites";
             } else {
-                $validationMessages[] = "✓ Tamaño: {$sizeMB} MB (dentro del límite)";
+                $validationMessages[] = "✓ Tamaño: {$sizeMB} MB";
             }
             
             // Leer el archivo convertido

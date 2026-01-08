@@ -323,12 +323,24 @@ document.addEventListener('DOMContentLoaded', function () {
                     item.downloadUrl = result.downloadUrl || '#';
                     displayQueue();
                 } else if (contentType && contentType.includes('application/pdf')) {
-                    // Es un PDF descargable directamente
+                    // Es un PDF descargable
                     const blob = await response.blob();
                     const downloadUrl = window.URL.createObjectURL(blob);
                     
+                    // Extraer nombre del archivo del header Content-Disposition
+                    const disposition = response.headers.get('Content-Disposition');
+                    let fileName = item.file.name.replace('.pdf', '_VUCEM_300DPI.pdf');
+                    
+                    if (disposition && disposition.includes('filename=')) {
+                        const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+                        if (filenameMatch) {
+                            fileName = filenameMatch[1];
+                        }
+                    }
+                    
                     item.status = 'completed';
                     item.downloadUrl = downloadUrl;
+                    item.fileName = fileName;
                     displayQueue();
                 } else {
                     // Respuesta inesperada (probablemente HTML de error)

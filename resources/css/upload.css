@@ -527,11 +527,10 @@ body {
     margin-top: 2rem;
     transition: all 0.3s ease;
     box-shadow: 0 10px 30px rgba(59, 130, 246, 0.3);
-    display: none;
+    display: block;
 }
 
 .btn-convert.active {
-    display: block;
     animation: fadeIn 0.5s ease;
 }
 
@@ -541,9 +540,10 @@ body {
 }
 
 .btn-convert:disabled {
-    opacity: 0.6;
+    opacity: 0.7;
     cursor: not-allowed;
     transform: none;
+    background: linear-gradient(135deg, #94a3b8 0%, #64748b 100%);
 }
 
 /* Info Cards */
