@@ -60,6 +60,40 @@
                 <!-- File List -->
                 <div class="file-list" id="fileList"></div>
 
+                <!-- Split Options -->
+                <div class="split-options" style="margin: 20px 0; padding: 25px; background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.92) 100%); border-radius: 16px; border: 2px solid #667eea; box-shadow: 0 4px 20px rgba(102,126,234,0.15);">
+                    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 18px; padding: 18px; background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%); border-radius: 12px; cursor: pointer; transition: all 0.3s ease; border: 2px solid #e2e8f0;" onclick="document.getElementById('splitEnabled').click()" onmouseover="this.style.borderColor='#667eea'; this.style.background='linear-gradient(135deg, #ebf4ff 0%, #e0e7ff 100%)'" onmouseout="this.style.borderColor='#e2e8f0'; this.style.background='linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%)'">
+                        <input type="checkbox" id="splitEnabled" name="splitEnabled" style="width: 24px; height: 24px; cursor: pointer; accent-color: #667eea;" onclick="event.stopPropagation();">
+                        <div style="flex: 1;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="font-size: 24px;">📂</span>
+                                <label for="splitEnabled" style="color: #2d3748; font-size: 17px; font-weight: 700; cursor: pointer; user-select: none; margin: 0;">
+                                    Dividir PDF en partes
+                                </label>
+                            </div>
+                            <p style="color: #4a5568; font-size: 13px; margin: 5px 0 0 32px; font-weight: 500;">Divide el documento en múltiples archivos más pequeños</p>
+                        </div>
+                    </div>
+                    <div id="splitControls" style="display: none; padding: 20px; background: rgba(255,255,255,0.95); border-radius: 12px; margin-top: 15px; border-left: 4px solid #667eea; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                        <label for="numberOfParts" style="color: #2d3748; font-size: 15px; font-weight: 600; display: block; margin-bottom: 12px;">
+                            📊 Número de partes:
+                        </label>
+                        <select id="numberOfParts" name="numberOfParts" style="padding: 12px 18px; border-radius: 10px; border: 2px solid #667eea; background: white; color: #2d3748; font-size: 15px; font-weight: 500; cursor: pointer; min-width: 180px; transition: all 0.3s ease; outline: none;" onmouseover="this.style.borderColor='#5a67d8'; this.style.boxShadow='0 0 0 3px rgba(102,126,234,0.1)'" onmouseout="this.style.borderColor='#667eea'; this.style.boxShadow='none'">
+                            <option value="2">✂️ 2 partes</option>
+                            <option value="3">✂️ 3 partes</option>
+                            <option value="4">✂️ 4 partes</option>
+                            <option value="5">✂️ 5 partes</option>
+                        </select>
+                        <div style="margin-top: 15px; padding: 14px 16px; background: linear-gradient(135deg, #ebf4ff 0%, #e0e7ff 100%); border-radius: 8px; border: 1px solid #c3dafe;">
+                            <p style="color: #2c5282; font-size: 13px; margin: 0; line-height: 1.6; font-weight: 500;">
+                                💡 <strong style="color: #1e40af;">Ejemplo:</strong> Si divides en 2 partes, se descargarán como:<br>
+                                <code style="background: rgba(102,126,234,0.15); padding: 3px 8px; border-radius: 4px; font-size: 12px; color: #4c51bf; font-weight: 600; border: 1px solid rgba(102,126,234,0.3);">nombre_parte1.pdf</code> y 
+                                <code style="background: rgba(102,126,234,0.15); padding: 3px 8px; border-radius: 4px; font-size: 12px; color: #4c51bf; font-weight: 600; border: 1px solid rgba(102,126,234,0.3);">nombre_parte2.pdf</code>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Convert Button -->
                 <button type="submit" class="btn-convert" id="btnConvert" disabled>
                     Convertir a formato VUCEM

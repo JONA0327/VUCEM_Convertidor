@@ -37,10 +37,14 @@ class PdfConverterController extends Controller
         // Validar que se haya subido un archivo PDF
         $request->validate([
             'file' => 'required|file|mimes:pdf|max:51200', // Max 50MB de entrada
+            'splitEnabled' => 'nullable|boolean',
+            'numberOfParts' => 'nullable|integer|min:2|max:5',
         ]);
 
         $file = $request->file('file');
         $originalName = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
+        $splitEnabled = $request->input('splitEnabled', false);
+        $numberOfParts = $request->input('numberOfParts', 2);
         
         // Obtener tamaño ANTES de mover el archivo
         $originalSize = $file->getSize();
@@ -66,17 +70,57 @@ class PdfConverterController extends Controller
         try {
             Log::info('PdfConverter: Iniciando conversión', [
                 'original_name' => $originalName,
-                'size_mb' => round($originalSize / (1024 * 1024), 2)
+                'size_mb' => round($originalSize / (1024 * 1024), 2),
+                'split_enabled' => $splitEnabled,
+                'number_of_parts' => $numberOfParts
             ]);
             
             // Convertir usando el servicio VucemPdfConverter (300 DPI exactos en TODO)
-            $this->converter->convertToVucem($inputPath, $outputPath);
+            $result = $this->converter->convertToVucem($inputPath, $outputPath, $splitEnabled, $numberOfParts);
             
             Log::info('PdfConverter: Conversión completada', [
                 'output_exists' => file_exists($outputPath),
-                'output_size' => file_exists($outputPath) ? filesize($outputPath) : 0
+                'output_size' => file_exists($outputPath) ? filesize($outputPath) : 0,
+                'split_files' => isset($result['split_files']) ? count($result['split_files']) : 0
             ]);
             
+            // Si se solicitó dividir en partes, manejar respuesta con múltiples archivos
+            if ($splitEnabled && isset($result['split_files']) && count($result['split_files']) > 0) {
+                $files = [];
+                
+                foreach ($result['split_files'] as $partInfo) {
+                    $partPath = $partInfo['path'];
+                    $partNumber = $partInfo['part'];
+                    
+                    $validation = $this->converter->validateVucemCompliance($partPath);
+                    $fileSize = filesize($partPath);
+                    $sizeMB = round($fileSize / (1024 * 1024), 2);
+                    
+                    $files[] = [
+                        'name' => $originalName . '_parte' . $partNumber . '_VUCEM.pdf',
+                        'content' => base64_encode(file_get_contents($partPath)),
+                        'size' => $fileSize,
+                        'size_mb' => $sizeMB,
+                        'part' => $partNumber,
+                        'pages' => $partInfo['pages']
+                    ];
+                    
+                    // Eliminar archivo temporal de la parte
+                    @unlink($partPath);
+                }
+                
+                // Limpiar archivos temporales
+                $this->cleanupFiles([$inputPath, $outputPath]);
+                
+                return response()->json([
+                    'success' => true,
+                    'split' => true,
+                    'files' => $files,
+                    'total_parts' => count($files)
+                ]);
+            }
+            
+            // Flujo normal: un solo archivo
             // Verificar que el archivo se creó
             if (!file_exists($outputPath)) {
                 throw new \Exception('Error al convertir el archivo.');

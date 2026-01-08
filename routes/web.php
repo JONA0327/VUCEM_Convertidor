@@ -4,6 +4,8 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\PdfConverterController;
 use App\Http\Controllers\VucemValidatorController;
 use App\Http\Controllers\VucemImageExtractorController;
+use App\Http\Controllers\PdfCompressController;
+use App\Http\Controllers\PdfMergeController;
 use App\Services\VucemPdfConverter;
 
 // Página principal con menú
@@ -28,6 +30,14 @@ Route::post('/extract-images', [VucemImageExtractorController::class, 'convert']
 // Validador
 Route::get('/validador', [VucemValidatorController::class, 'index'])->name('validador');
 Route::post('/validador', [VucemValidatorController::class, 'validatePdf'])->name('validador.validate');
+
+// Compresor de PDF (mantiene 300 DPI)
+Route::get('/comprimir', [PdfCompressController::class, 'index'])->name('comprimir');
+Route::post('/compress-pdf', [PdfCompressController::class, 'compress'])->name('pdf.compress');
+
+// Combinador de PDFs (mantiene 300 DPI)
+Route::get('/combinar', [PdfMergeController::class, 'index'])->name('combinar');
+Route::post('/merge-pdfs', [PdfMergeController::class, 'merge'])->name('pdf.merge');
 
 // Debug de herramientas (temporal - eliminar en producción)
 Route::get('/debug-tools', function () {

@@ -10,7 +10,9 @@ export default defineConfig({
                 'resources/js/app.js',
                 'resources/css/upload.css',
                 'resources/js/upload.js',
-                'resources/js/extract_images.js'
+                'resources/js/extract_images.js',
+                'resources/js/compress.js',
+                'resources/js/merge.js'
             ],
             refresh: true,
         }),

@@ -68,8 +68,14 @@ class VucemPdfConverter
      * ESTRATEGIA MEJORADA: Rasterizar completamente cada página a exactamente 300 DPI
      * como imagen PNG en escala de grises, luego reconstruir el PDF.
      * Esto garantiza que TODO (texto, imágenes, vectores) esté a exactamente 300 DPI.
+     * 
+     * @param string $inputPath Ruta del archivo PDF de entrada
+     * @param string $outputPath Ruta del archivo PDF de salida
+     * @param bool $splitEnabled Si se debe dividir el PDF en partes
+     * @param int $numberOfParts Número de partes en las que dividir (2-5)
+     * @return array Información sobre los archivos generados
      */
-    public function convertToVucem(string $inputPath, string $outputPath): void
+    public function convertToVucem(string $inputPath, string $outputPath, bool $splitEnabled = false, int $numberOfParts = 2): array
     {
         // Aumentar límite de tiempo y memoria de ejecución
         set_time_limit(1200); // 20 minutos
@@ -124,9 +130,70 @@ class VucemPdfConverter
                 'quality' => '15%'
             ]);
             
-            // Paso 2: Decidir estrategia según número de páginas
-            if ($totalPages > 10) {
-                // PDF grande: dividir en grupos de 10 páginas
+            // Paso 2: Verificar si se solicitó división personalizada
+            if ($splitEnabled && $numberOfParts >= 2 && $numberOfParts <= 5) {
+                // División personalizada en N partes
+                Log::info("VucemConverter: División personalizada solicitada en {$numberOfParts} partes");
+                
+                $pagesPerPart = ceil($totalPages / $numberOfParts);
+                $groups = array_chunk($jpegFiles, $pagesPerPart);
+                $outputFiles = [];
+                
+                foreach ($groups as $groupIndex => $groupJpegs) {
+                    $groupNumber = $groupIndex + 1;
+                    Log::info("VucemConverter: Procesando parte {$groupNumber}/{$numberOfParts}");
+                    
+                    $groupOutput = str_replace('.pdf', "_parte{$groupNumber}.pdf", $outputPath);
+                    
+                    $pdf = new \TCPDF('P', 'pt', 'A4', true, 'UTF-8', false);
+                    $pdf->SetCreator('VUCEM Converter');
+                    $pdf->SetTitle("Documento VUCEM - Parte {$groupNumber} de {$numberOfParts}");
+                    $pdf->setPrintHeader(false);
+                    $pdf->setPrintFooter(false);
+                    $pdf->SetMargins(0, 0, 0);
+                    $pdf->SetAutoPageBreak(false, 0);
+                    $pdf->setImageScale(1.0);
+                    $pdf->setJPEGQuality(100);
+                    $pdf->SetCompression(false);
+                    
+                    foreach ($groupJpegs as $jpegFile) {
+                        list($widthPx, $heightPx) = getimagesize($jpegFile);
+                        $widthPt = ($widthPx / 300) * 72;
+                        $heightPt = ($heightPx / 300) * 72;
+                        $pdf->AddPage('P', [$widthPt, $heightPt]);
+                        $pdf->Image($jpegFile, 0, 0, $widthPt, $heightPt, 'JPEG', '', '', false, 300, '', false, false, 0, false, false, false);
+                    }
+                    
+                    $pdfContent = $pdf->Output('', 'S');
+                    file_put_contents($groupOutput, $pdfContent);
+                    
+                    $sizeMB = round(filesize($groupOutput) / (1024 * 1024), 2);
+                    Log::info("VucemConverter: Parte {$groupNumber} creada - {$sizeMB} MB, " . count($groupJpegs) . " páginas");
+                    
+                    $outputFiles[] = [
+                        'path' => $groupOutput,
+                        'size' => $sizeMB,
+                        'pages' => count($groupJpegs),
+                        'part' => $groupNumber
+                    ];
+                }
+                
+                $totalSize = array_sum(array_column($outputFiles, 'size'));
+                Log::info("VucemConverter: División personalizada completada", [
+                    'parts' => count($outputFiles),
+                    'total_size_mb' => round($totalSize, 2),
+                    'total_pages' => $totalPages
+                ]);
+                
+                // Retornar información de archivos divididos
+                return [
+                    'success' => true,
+                    'split_files' => $outputFiles,
+                    'total_pages' => $totalPages
+                ];
+                
+            } elseif ($totalPages > 10) {
+                // PDF grande: dividir en grupos de 10 páginas (lógica original)
                 Log::info("VucemConverter: PDF grande ({$totalPages} páginas), dividiendo en grupos de 10");
                 
                 $groups = array_chunk($jpegFiles, 10);
@@ -316,6 +383,13 @@ class VucemPdfConverter
                     'note' => $totalPages > 10 ? 'PDF grande procesado por partes y unificado' : 'PDF procesado directamente'
                 ]);
             }
+            
+            return [
+                'success' => true,
+                'output_path' => $outputPath,
+                'size_mb' => $outputSizeMB,
+                'pages' => $pageCount
+            ];
 
         } finally {
             $this->cleanupDirectory($tempDir);
@@ -954,4 +1028,211 @@ class VucemPdfConverter
 
         return $debug;
     }
+
+    /**
+     * Comprime un PDF sin rasterizar, manteniendo 300 DPI
+     * 
+     * @param string $inputPath Ruta del archivo PDF de entrada
+     * @param string $outputPath Ruta del archivo PDF de salida
+     * @param string $level Nivel de compresión: screen, ebook, printer, prepress
+     * @return array Información sobre la compresión
+     */
+    public function compressPdf(string $inputPath, string $outputPath, string $level = 'printer'): array
+    {
+        if (!file_exists($inputPath)) {
+            throw new RuntimeException("El archivo de entrada no existe: {$inputPath}");
+        }
+
+        if (!$this->ghostscriptPath) {
+            throw new RuntimeException('Ghostscript no está disponible en el sistema.');
+        }
+
+        // Aumentar límite de tiempo para archivos grandes
+        set_time_limit(600); // 10 minutos
+        ini_set('max_execution_time', '600');
+
+        $inputSize = filesize($inputPath);
+        
+        // Configuración según nivel de compresión
+        $settings = [
+            'screen' => [
+                'dpi' => 72,
+                'description' => 'Pantalla - Máxima compresión (72 DPI)'
+            ],
+            'ebook' => [
+                'dpi' => 150,
+                'description' => 'Ebook - Alta compresión (150 DPI)'
+            ],
+            'printer' => [
+                'dpi' => 300,
+                'description' => 'Impresora - Mantiene 300 DPI'
+            ],
+            'prepress' => [
+                'dpi' => 300,
+                'description' => 'Preimpresión - Calidad máxima 300 DPI'
+            ]
+        ];
+
+        $config = $settings[$level] ?? $settings['printer'];
+
+        Log::info('PdfCompress: Iniciando compresión', [
+            'input' => basename($inputPath),
+            'level' => $level,
+            'dpi' => $config['dpi'],
+            'input_size_mb' => round($inputSize / (1024 * 1024), 2)
+        ]);
+
+        // Argumentos para Ghostscript con compresión optimizada
+        $gsArgs = [
+            '-sDEVICE=pdfwrite',
+            '-dCompatibilityLevel=1.4',
+            '-dPDFSETTINGS=/' . $level,
+            '-dNOPAUSE',
+            '-dBATCH',
+            '-dSAFER',
+            '-dQUIET',
+            '-sColorConversionStrategy=Gray',
+            '-dProcessColorModel=/DeviceGray',
+            '-dCompressFonts=true',
+            '-dCompressPages=true',
+            '-dOptimize=true',
+        ];
+
+        // Configuración específica según el nivel
+        if ($level === 'printer' || $level === 'prepress') {
+            // Mantener 300 DPI pero comprimir con JPEG
+            $gsArgs[] = '-dDownsampleGrayImages=false';
+            $gsArgs[] = '-dGrayImageResolution=300';
+            $gsArgs[] = '-dGrayImageDownsampleThreshold=1.0';
+            $gsArgs[] = '-dAutoFilterGrayImages=false';
+            $gsArgs[] = '-dGrayImageFilter=/DCTEncode';
+            $gsArgs[] = '-dEncodeGrayImages=true';
+            // Calidad JPEG más baja para comprimir mejor
+            $gsArgs[] = '-dJPEGQ=60';
+        } else {
+            // Para screen y ebook, permitir downsample
+            $gsArgs[] = '-dDownsampleGrayImages=true';
+            $gsArgs[] = '-dGrayImageDownsampleType=/Bicubic';
+            $gsArgs[] = '-dGrayImageResolution=' . $config['dpi'];
+            $gsArgs[] = '-dAutoFilterGrayImages=false';
+            $gsArgs[] = '-dGrayImageFilter=/DCTEncode';
+            $gsArgs[] = '-dEncodeGrayImages=true';
+            $gsArgs[] = '-dJPEGQ=50';
+        }
+
+        $gsArgs[] = '-sOutputFile=' . $outputPath;
+        $gsArgs[] = $inputPath;
+
+        $this->executeGhostscript($gsArgs);
+
+        if (!file_exists($outputPath)) {
+            throw new RuntimeException('No se pudo comprimir el PDF');
+        }
+
+        $outputSize = filesize($outputPath);
+        $reduction = round((($inputSize - $outputSize) / $inputSize) * 100, 2);
+
+        Log::info('PdfCompress: Compresión completada', [
+            'output_size_mb' => round($outputSize / (1024 * 1024), 2),
+            'reduction_percent' => $reduction,
+            'level' => $level
+        ]);
+
+        return [
+            'success' => true,
+            'input_size' => $inputSize,
+            'output_size' => $outputSize,
+            'reduction_percent' => $reduction,
+            'level' => $level,
+            'description' => $config['description']
+        ];
+    }
+
+    /**
+     * Combina múltiples PDFs en uno solo sin rasterizar, manteniendo 300 DPI
+     * 
+     * @param array $inputPaths Array con rutas de archivos PDF a combinar
+     * @param string $outputPath Ruta del archivo PDF de salida
+     * @return array Información sobre la combinación
+     */
+    public function mergePdfsKeepDpi(array $inputPaths, string $outputPath): array
+    {
+        if (empty($inputPaths)) {
+            throw new RuntimeException('No hay archivos PDF para combinar.');
+        }
+
+        foreach ($inputPaths as $path) {
+            if (!file_exists($path)) {
+                throw new RuntimeException("El archivo no existe: {$path}");
+            }
+        }
+
+        if (!$this->ghostscriptPath) {
+            throw new RuntimeException('Ghostscript no está disponible en el sistema.');
+        }
+
+        // Aumentar límite de tiempo para múltiples archivos
+        set_time_limit(600); // 10 minutos
+        ini_set('max_execution_time', '600');
+
+        Log::info('PdfMerge: Iniciando combinación', [
+            'files_count' => count($inputPaths),
+            'total_size_mb' => round(array_sum(array_map('filesize', $inputPaths)) / (1024 * 1024), 2)
+        ]);
+
+        // Si solo hay un archivo, copiarlo directamente
+        if (count($inputPaths) === 1) {
+            copy($inputPaths[0], $outputPath);
+            $outputSize = filesize($outputPath);
+            
+            return [
+                'success' => true,
+                'files_merged' => 1,
+                'output_size' => $outputSize
+            ];
+        }
+
+        // Combinar todos los PDFs usando Ghostscript manteniendo 300 DPI
+        $gsArgs = [
+            '-sDEVICE=pdfwrite',
+            '-dCompatibilityLevel=1.4',
+            '-dPDFSETTINGS=/prepress',
+            '-dNOPAUSE',
+            '-dBATCH',
+            '-dSAFER',
+            '-dQUIET',
+            '-sColorConversionStrategy=Gray',
+            '-dProcessColorModel=/DeviceGray',
+            '-dDownsampleGrayImages=false',
+            '-dGrayImageResolution=300',
+            '-dAutoFilterGrayImages=false',
+            '-dGrayImageFilter=/FlateEncode',
+            '-sOutputFile=' . $outputPath,
+        ];
+
+        // Agregar todos los archivos PDF
+        foreach ($inputPaths as $pdf) {
+            $gsArgs[] = $pdf;
+        }
+
+        $this->executeGhostscript($gsArgs);
+
+        if (!file_exists($outputPath) || filesize($outputPath) < 100) {
+            throw new RuntimeException('No se pudo combinar los PDFs');
+        }
+
+        $outputSize = filesize($outputPath);
+
+        Log::info('PdfMerge: Combinación completada', [
+            'output_size_mb' => round($outputSize / (1024 * 1024), 2),
+            'files_merged' => count($inputPaths)
+        ]);
+
+        return [
+            'success' => true,
+            'files_merged' => count($inputPaths),
+            'output_size' => $outputSize
+        ];
+    }
 }
+

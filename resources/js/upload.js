@@ -12,6 +12,16 @@ document.addEventListener('DOMContentLoaded', function () {
     // Queue management
     let fileQueue = []; // Array of {file, status, progress, error}
     let isProcessing = false;
+    
+    // Split options toggle
+    const splitEnabled = document.getElementById('splitEnabled');
+    const splitControls = document.getElementById('splitControls');
+    
+    if (splitEnabled && splitControls) {
+        splitEnabled.addEventListener('change', function() {
+            splitControls.style.display = this.checked ? 'block' : 'none';
+        });
+    }
 
     // Button to open file explorer
     if (btnSelectFiles) {
@@ -310,6 +320,14 @@ document.addEventListener('DOMContentLoaded', function () {
             // Create FormData
             const formData = new FormData();
             formData.append('file', item.file);
+            
+            // Get split options if enabled
+            const splitEnabled = document.getElementById('splitEnabled');
+            const numberOfParts = document.getElementById('numberOfParts');
+            if (splitEnabled && splitEnabled.checked) {
+                formData.append('splitEnabled', '1');
+                formData.append('numberOfParts', numberOfParts.value);
+            }
 
             // Make API call to convert endpoint
             const response = await fetch('/convert', {
@@ -324,36 +342,74 @@ document.addEventListener('DOMContentLoaded', function () {
             item.progress = 100;
 
             if (response.ok) {
-                // Get the blob from response
-                const blob = await response.blob();
-                const fileName = response.headers.get('X-File-Name') || item.file.name.replace('.pdf', '_VUCEM.pdf');
-                const fileSizeMB = response.headers.get('X-File-Size-MB');
-                const vucemValid = response.headers.get('X-VUCEM-Valid');
-                const validationMessages = response.headers.get('X-Validation-Messages');
+                // Check if response is JSON (multiple files) or blob (single file)
+                const contentType = response.headers.get('Content-Type');
                 
-                // Parse validation messages
-                let validationInfo = [];
-                if (validationMessages) {
-                    try {
-                        validationInfo = JSON.parse(validationMessages);
-                    } catch (e) {
-                        console.warn('No se pudieron parsear mensajes de validación', e);
+                if (contentType && contentType.includes('application/json')) {
+                    // Multiple files response
+                    const jsonData = await response.json();
+                    
+                    if (jsonData.split && jsonData.files) {
+                        item.status = 'completed';
+                        item.splitFiles = jsonData.files;
+                        item.totalParts = jsonData.total_parts;
+                        displayQueue();
+                        
+                        // Auto-download all parts
+                        console.log(`✅ Archivo dividido en ${jsonData.total_parts} partes`);
+                        
+                        // Download each part with a delay
+                        for (let i = 0; i < jsonData.files.length; i++) {
+                            const fileData = jsonData.files[i];
+                            const blob = base64ToBlob(fileData.content, 'application/pdf');
+                            const url = window.URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.style.display = 'none';
+                            a.href = url;
+                            a.download = fileData.name;
+                            document.body.appendChild(a);
+                            a.click();
+                            window.URL.revokeObjectURL(url);
+                            document.body.removeChild(a);
+                            
+                            // Small delay between downloads
+                            if (i < jsonData.files.length - 1) {
+                                await new Promise(resolve => setTimeout(resolve, 500));
+                            }
+                        }
                     }
+                } else {
+                    // Single file response (blob)
+                    const blob = await response.blob();
+                    const fileName = response.headers.get('X-File-Name') || item.file.name.replace('.pdf', '_VUCEM.pdf');
+                    const fileSizeMB = response.headers.get('X-File-Size-MB');
+                    const vucemValid = response.headers.get('X-VUCEM-Valid');
+                    const validationMessages = response.headers.get('X-Validation-Messages');
+                    
+                    // Parse validation messages
+                    let validationInfo = [];
+                    if (validationMessages) {
+                        try {
+                            validationInfo = JSON.parse(validationMessages);
+                        } catch (e) {
+                            console.warn('No se pudieron parsear mensajes de validación', e);
+                        }
+                    }
+                    
+                    item.status = 'completed';
+                    item.downloadBlob = blob;
+                    item.downloadName = fileName;
+                    item.downloadUrl = true;
+                    item.outputSize = blob.size;
+                    item.fileSizeMB = fileSizeMB;
+                    item.vucemValid = vucemValid === 'true';
+                    item.validationMessages = validationInfo;
+                    displayQueue();
+                    
+                    // Auto-descargar archivo convertido
+                    console.log('✅ Archivo convertido:', fileName);
+                    window.downloadFile(item.id.toString());
                 }
-                
-                item.status = 'completed';
-                item.downloadBlob = blob;
-                item.downloadName = fileName;
-                item.downloadUrl = true;
-                item.outputSize = blob.size;
-                item.fileSizeMB = fileSizeMB;
-                item.vucemValid = vucemValid === 'true';
-                item.validationMessages = validationInfo;
-                displayQueue();
-                
-                // Auto-descargar archivo convertido
-                console.log('✅ Archivo convertido:', fileName);
-                window.downloadFile(item.id.toString());
             } else {
                 // Intentar parsear JSON, si falla mostrar error genérico
                 let errorMessage = 'Error en la respuesta del servidor';
@@ -377,5 +433,16 @@ document.addEventListener('DOMContentLoaded', function () {
 
         // Small delay between files
         await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
+    // Helper function to convert base64 to Blob
+    function base64ToBlob(base64, mimeType) {
+        const byteCharacters = atob(base64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        return new Blob([byteArray], { type: mimeType });
     }
 });
