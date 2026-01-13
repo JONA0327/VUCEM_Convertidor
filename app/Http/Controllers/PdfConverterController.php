@@ -38,7 +38,7 @@ class PdfConverterController extends Controller
         $request->validate([
             'file' => 'required|file|mimes:pdf|max:51200', // Max 50MB de entrada
             'splitEnabled' => 'nullable|boolean',
-            'numberOfParts' => 'nullable|integer|min:2|max:5',
+            'numberOfParts' => 'nullable|integer|min:2|max:8',
         ]);
 
         $file = $request->file('file');

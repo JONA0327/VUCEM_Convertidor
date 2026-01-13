@@ -72,7 +72,7 @@ class VucemPdfConverter
      * @param string $inputPath Ruta del archivo PDF de entrada
      * @param string $outputPath Ruta del archivo PDF de salida
      * @param bool $splitEnabled Si se debe dividir el PDF en partes
-     * @param int $numberOfParts Número de partes en las que dividir (2-5)
+     * @param int $numberOfParts Número de partes en las que dividir (2-8)
      * @return array Información sobre los archivos generados
      */
     public function convertToVucem(string $inputPath, string $outputPath, bool $splitEnabled = false, int $numberOfParts = 2): array
@@ -131,7 +131,7 @@ class VucemPdfConverter
             ]);
             
             // Paso 2: Verificar si se solicitó división personalizada
-            if ($splitEnabled && $numberOfParts >= 2 && $numberOfParts <= 5) {
+            if ($splitEnabled && $numberOfParts >= 2 && $numberOfParts <= 8) {
                 // División personalizada en N partes
                 Log::info("VucemConverter: División personalizada solicitada en {$numberOfParts} partes");
                 

@@ -83,6 +83,9 @@
                             <option value="3">✂️ 3 partes</option>
                             <option value="4">✂️ 4 partes</option>
                             <option value="5">✂️ 5 partes</option>
+                            <option value="6">✂️ 6 partes</option>
+                            <option value="7">✂️ 7 partes</option>
+                            <option value="8">✂️ 8 partes</option>
                         </select>
                         <div style="margin-top: 15px; padding: 14px 16px; background: linear-gradient(135deg, #ebf4ff 0%, #e0e7ff 100%); border-radius: 8px; border: 1px solid #c3dafe;">
                             <p style="color: #2c5282; font-size: 13px; margin: 0; line-height: 1.6; font-weight: 500;">
